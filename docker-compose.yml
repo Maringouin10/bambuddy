@@ -109,9 +109,9 @@ services:
       # show up as your user on the host. Defaults to 1000:1000.
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
-      # Port BamBuddy runs on (default: 8000)
-      # Usage: PORT=8080 docker compose up -d
-      - PORT=${PORT:-8000}
+      # Port BamBuddy runs on. Hard-coded to 8000 on purpose: a stray PORT
+      # variable in the host shell or .env (e.g. PORT=8200) must not override it.
+      - PORT=8000
       # Directory this compose file lives in, so Settings → Updates can print
       # an update command you can paste from anywhere instead of one that only
       # works if you are already in the right directory (#2664). Uncomment to
