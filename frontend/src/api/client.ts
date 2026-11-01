@@ -423,6 +423,10 @@ export interface Printer {
   // API keys receive a Printer without this field.
   access_code?: string;
   model: string | null;
+  // "bambu" = MQTT + FTPS (default). "creality" = Klipper / Moonraker HTTP API
+  // (Ender-3 V3 KE / CoreXZ / Plus ...): no serial number, access code, AMS or HMS.
+  printer_type?: 'bambu' | 'creality';
+  api_port?: number | null;  // Moonraker port for Creality printers (default 7125)
   location: string | null;  // Group/location name
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
   // Model is sold with both Standard and High Flow nozzles, so a K-profile's
@@ -727,9 +731,12 @@ export interface PrinterStatus {
 
 export interface PrinterCreate {
   name: string;
+  // Both are sent empty for Creality printers; the backend derives the id.
   serial_number: string;
   ip_address: string;
   access_code: string;
+  printer_type?: 'bambu' | 'creality';
+  api_port?: number | null;
   model?: string;
   location?: string;
   auto_archive?: boolean;

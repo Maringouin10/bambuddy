@@ -7298,6 +7298,21 @@ class PrintScheduler:
             await self._power_off_if_needed(db, item)
             return
 
+        # Creality / Klipper printers are monitored and controlled, but Bambuddy cannot
+        # yet push a sliced file to them: the upload below is Bambu FTPS. Fail the item
+        # with a reason a person can act on instead of an opaque FTP connection error.
+        if getattr(printer, "printer_type", "bambu") != "bambu":
+            item.status = "failed"
+            item.error_message = (
+                "Starting prints from Bambuddy is not supported for Creality printers yet. "
+                "Start the print from Creality Print or Fluidd; Bambuddy still monitors and archives it."
+            )
+            item.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.error("Queue item %s: printer %s is not a Bambu printer", item.id, item.printer_id)
+            await self._power_off_if_needed(db, item)
+            return
+
         # Check printer is connected
         if not printer_manager.is_connected(item.printer_id):
             item.status = "failed"

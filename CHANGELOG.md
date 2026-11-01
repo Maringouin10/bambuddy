@@ -2,6 +2,13 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Creality printers over Klipper / Moonraker — starting with the Ender-3 V3 family** — Add Printer now asks for the printer brand. **Creality** needs only a name and an IP address (the Moonraker port defaults to 7125): no serial number, access code or network discovery. Bambuddy polls the printer's Moonraker API every two seconds and shows it on the normal printer card — state, progress, time left, layer, file name, nozzle/bed temperatures and the part-cooling fan — and the existing automations see its prints like any other: archive on start and completion, notifications, smart plugs, the plate-clear gate and the MQTT relay. Pause, resume, stop, nozzle and bed temperature, print speed, part fan, chamber light (when the printer exposes an LED pin), homing and axis jogs all work from the card. The webcam Moonraker advertises is filled in as the printer's external camera when it is added. Creality printers have their own `printer_type` and optional `api_port` columns (added by an automatic migration); every existing printer stays a Bambu printer.
+  - **Not in this first version:** starting a print from Bambuddy on a Creality printer (the print button, drag-and-drop and the print-modal printer list are hidden for it, and a queue item aimed at one fails with an explanatory message — start prints from Creality Print or Fluidd; Bambuddy monitors and archives them), the printer's file browser, and AMS / HMS / K-profile / drying features, which Klipper printers do not have. Their archives are name-and-timing records, as there is no 3MF to fetch.
+  - Developed against Moonraker's documented API and a simulated printer; please report how it behaves on real Ender-3 V3 / KE / CoreXZ / Plus hardware.
+
 ## [1.2.5.7] - 2026-10-02
 
 ### Added

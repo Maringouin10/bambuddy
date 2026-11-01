@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -32,6 +33,11 @@ class PrinterBase(BaseModel):
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
     model: str | None = None
+    # "bambu" = MQTT + FTPS (default); "creality" = Klipper/Moonraker HTTP API
+    # (Ender-3 V3 KE / CoreXZ / Plus, K1 ...).
+    printer_type: Literal["bambu", "creality"] = "bambu"
+    # Moonraker port for "creality" printers; the default (7125) is used when None.
+    api_port: int | None = Field(default=None, ge=1, le=65535)
     location: str | None = None  # Group/location name
     auto_archive: bool = True
     external_camera_url: str | None = None
@@ -45,7 +51,25 @@ class PrinterCreate(PrinterBase):
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str = Field(..., min_length=1, max_length=20)
+    # Required for Bambu printers (enforced below); Creality/Moonraker
+    # printers have no access code.
+    access_code: str = Field(default="", max_length=20)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _creality_defaults(cls, data):
+        """A Creality printer has no serial number to type in: derive a stable id."""
+        if isinstance(data, dict) and data.get("printer_type") == "creality":
+            data = dict(data)
+            if not str(data.get("serial_number") or "").strip():
+                data["serial_number"] = f"CREALITY-{str(data.get('ip_address') or '').strip()}"[:50]
+        return data
+
+    @model_validator(mode="after")
+    def _bambu_requires_access_code(self):
+        if self.printer_type == "bambu" and not self.access_code.strip():
+            raise ValueError("access_code is required for Bambu printers")
+        return self
 
 
 class PlateDetectionROI(BaseModel):
@@ -66,6 +90,7 @@ class PrinterUpdate(BaseModel):
     )
     access_code: str | None = None
     model: str | None = None
+    api_port: int | None = Field(default=None, ge=1, le=65535)
     location: str | None = None
     is_active: bool | None = None
     auto_archive: bool | None = None
@@ -111,6 +136,8 @@ class PrinterResponse(PrinterBase):
             "serial_number": printer.serial_number,
             "ip_address": printer.ip_address,
             "model": printer.model,
+            "printer_type": printer.printer_type or "bambu",
+            "api_port": printer.api_port,
             "location": printer.location,
             "auto_archive": printer.auto_archive,
             "external_camera_url": printer.external_camera_url,

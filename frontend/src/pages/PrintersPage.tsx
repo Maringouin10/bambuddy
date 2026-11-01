@@ -3507,7 +3507,10 @@ function PrinterCard({
   // used to check — so someone holding that but neither of these had the file
   // uploaded and then rejected by the queue, leaving it stranded. The Print
   // button below has always checked this pair.
-  const canDrop = hasPermission('library:upload') && hasPermission('queue:create');
+  // Creality (Moonraker) printers cannot be fed a sliced file from Bambuddy yet, so the
+  // card is not a drop target: no overlay, and the browser's drop is simply swallowed.
+  const isCrealityCard = printer.printer_type === 'creality';
+  const canDrop = !isCrealityCard && hasPermission('library:upload') && hasPermission('queue:create');
 
   // Drives the wording alone. Shared with the PrintModal so the card's promise
   // and the modal's own "will start later" toast cannot disagree.
@@ -3515,6 +3518,7 @@ function PrinterCard({
 
   const handleCardDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
+    if (isCrealityCard) return;
     dragCounterRef.current++;
     if (dragCounterRef.current === 1) setIsDraggingFile(true);
   };
@@ -3526,6 +3530,7 @@ function PrinterCard({
 
   const handleCardDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
+    if (isCrealityCard) return;
     dragCounterRef.current--;
     if (dragCounterRef.current === 0) setIsDraggingFile(false);
   };
@@ -4047,8 +4052,8 @@ function PrinterCard({
                   {wifiSignal}dBm
                 </span>
               )}
-              {/* HMS Status Indicator */}
-              {status?.connected && (() => {
+              {/* HMS Status Indicator (Bambu only: Klipper printers have no HMS) */}
+              {status?.connected && !isCrealityCard && (() => {
                 const knownErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
                 return (
                   <button
@@ -6701,6 +6706,7 @@ function PrinterCard({
                     onClose={() => setCameraMenuAnchor(null)}
                   />
                 )}
+                {!isCrealityCard && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -6711,11 +6717,13 @@ function PrinterCard({
                 >
                   <HardDrive className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
                 </Button>
+                )}
                 {/* Shown whatever the printer is doing (#2849): this uploads a
                     file and queues it, which a busy or offline printer is no
                     reason to refuse -- it only means the item waits. Hiding it
                     while the drop zone accepted the same file would have left
                     the two routes into this flow disagreeing. */}
+                {!isCrealityCard && (
                 <Button
                   size="sm"
                   onClick={() => setShowUploadForPrint(true)}
@@ -6732,6 +6740,7 @@ function PrinterCard({
                   <PrinterIcon className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
                   {t('common.print')}
                 </Button>
+                )}
               </div>
             </div>
         </div>
@@ -7662,10 +7671,15 @@ export function AddPrinterModal({
     serial_number: '',
     ip_address: '',
     access_code: '',
+    printer_type: 'bambu',
     model: '',
     location: '',
     auto_archive: true,
   });
+  // Creality / Klipper printers are driven over Moonraker's HTTP API: no
+  // serial number, access code or network discovery, just an IP (+ optional port).
+  const isCreality = form.printer_type === 'creality';
+  const [moonrakerPort, setMoonrakerPort] = useState('');
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -7717,6 +7731,18 @@ export function AddPrinterModal({
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isCreality) {
+      // The Bambu connection diagnostic probes MQTT/FTPS ports, which a Klipper
+      // printer does not have. The backend probes Moonraker itself on create and
+      // refuses to save a printer it cannot reach.
+      onAdd({
+        ...form,
+        serial_number: '',
+        access_code: '',
+        api_port: moonrakerPort.trim() ? Number(moonrakerPort) : undefined,
+      });
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -7863,7 +7889,34 @@ export function AddPrinterModal({
         <CardContent>
           <h2 className="text-xl font-semibold mb-4">{t('printers.addPrinter')}</h2>
 
-          {/* Discovery Section */}
+          {/* Printer brand: Bambu Lab (MQTT) or Creality (Klipper / Moonraker) */}
+          <div className="mb-4">
+            <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.printerBrand')}</label>
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t('printers.modal.printerBrand')}>
+              {([['bambu', 'Bambu Lab'], ['creality', 'Creality']] as const).map(([type, label]) => (
+                <button
+                  key={type}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.printer_type === type}
+                  onClick={() => setForm({ ...form, printer_type: type, model: '' })}
+                  className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
+                    form.printer_type === type
+                      ? 'border-bambu-green bg-bambu-green/10 text-white'
+                      : 'border-bambu-dark-tertiary text-bambu-gray hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {isCreality && (
+              <p className="text-xs text-bambu-gray mt-2">{t('printers.modal.crealityHint')}</p>
+            )}
+          </div>
+
+          {/* Discovery Section (Bambu only: SSDP / subnet scan find Bambu printers) */}
+          {!isCreality && (
           <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
             {/* Subnet picker — always visible. The dropdown lists detected
                 interface subnets and a "Custom..." sentinel that reveals
@@ -7990,6 +8043,7 @@ export function AddPrinterModal({
               </p>
             )}
           </div>
+          )}
           <form onSubmit={handleAddSubmit} className="space-y-4">
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
@@ -8014,28 +8068,46 @@ export function AddPrinterModal({
                 placeholder="192.168.1.100 or printer.local"
               />
             </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
-              <input
-                type="text"
-                required
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.serial_number}
-                onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
-                placeholder="01P00A000000000"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
-              <input
-                type="password"
-                required
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.access_code}
-                onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.modal.fromPrinterSettings')}
-              />
-            </div>
+            {isCreality ? (
+              <div>
+                <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.moonrakerPort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={moonrakerPort}
+                  onChange={(e) => setMoonrakerPort(e.target.value)}
+                  placeholder="7125"
+                />
+                <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.moonrakerPortHelp')}</p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
+                  <input
+                    type="text"
+                    required
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.serial_number}
+                    onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
+                    placeholder="01P00A000000000"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+                  <input
+                    type="password"
+                    required
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.access_code}
+                    onChange={(e) => setForm({ ...form, access_code: e.target.value })}
+                    placeholder={t('printers.modal.fromPrinterSettings')}
+                  />
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
               <select
@@ -8044,32 +8116,42 @@ export function AddPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-                <optgroup label="A2 Series">
-                  <option value="A2L">A2L</option>
-                </optgroup>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P1P">P1P</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P2S">P2S</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1">X1</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1E">X1E</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
+                {isCreality ? (
+                  <optgroup label="Ender-3 V3 Series">
+                    <option value="Ender-3 V3">Ender-3 V3 (CoreXZ)</option>
+                    <option value="Ender-3 V3 KE">Ender-3 V3 KE</option>
+                    <option value="Ender-3 V3 Plus">Ender-3 V3 Plus</option>
+                  </optgroup>
+                ) : (
+                  <>
+                  <optgroup label="A1 Series">
+                    <option value="A1">A1</option>
+                    <option value="A1 Mini">A1 Mini</option>
+                  </optgroup>
+                  <optgroup label="A2 Series">
+                    <option value="A2L">A2L</option>
+                  </optgroup>
+                  <optgroup label="H2 Series">
+                    <option value="H2C">H2C</option>
+                    <option value="H2D">H2D</option>
+                    <option value="H2D Pro">H2D Pro</option>
+                    <option value="H2S">H2S</option>
+                  </optgroup>
+                  <optgroup label="P Series">
+                    <option value="P1P">P1P</option>
+                    <option value="P1S">P1S</option>
+                    <option value="P2S">P2S</option>
+                  </optgroup>
+                  <optgroup label="X1 Series">
+                    <option value="X1">X1</option>
+                    <option value="X1C">X1 Carbon</option>
+                    <option value="X1E">X1E</option>
+                  </optgroup>
+                  <optgroup label="X2 Series">
+                    <option value="X2D">X2D</option>
+                  </optgroup>
+                  </>
+                )}
               </select>
             </div>
             <div>
@@ -8095,6 +8177,7 @@ export function AddPrinterModal({
                 {t('printers.modal.autoArchiveLabel')}
               </label>
             </div>
+            {!isCreality && (
             <button
               type="button"
               onClick={() => setShowDiagnostic(true)}
@@ -8104,6 +8187,7 @@ export function AddPrinterModal({
               <Stethoscope className="w-4 h-4" />
               {t('diagnostic.runButton')}
             </button>
+            )}
             {saveWarning ? (
               <div className="rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 p-3 space-y-3">
                 <div className="flex items-start gap-2">
@@ -8444,10 +8528,12 @@ function EditPrinterModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const isCreality = printer.printer_type === 'creality';
   const [form, setForm] = useState({
     name: printer.name,
     ip_address: printer.ip_address,
     access_code: '',
+    api_port: printer.api_port ? String(printer.api_port) : '',
     model: printer.model || '',
     location: printer.location || '',
     auto_archive: printer.auto_archive,
@@ -8491,11 +8577,20 @@ function EditPrinterModal({
     if (form.access_code) {
       data.access_code = form.access_code;
     }
+    // Creality: an empty port means "use the Moonraker default", so send null to clear it
+    if (isCreality) {
+      data.api_port = form.api_port.trim() ? Number(form.api_port) : null;
+    }
     updateMutation.mutate(data);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isCreality) {
+      // Bambu's MQTT/FTPS diagnostic does not apply to a Moonraker printer.
+      doSave();
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -8547,26 +8642,44 @@ function EditPrinterModal({
                 placeholder="192.168.1.100 or printer.local"
               />
             </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
-              <input
-                type="text"
-                disabled
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray cursor-not-allowed"
-                value={printer.serial_number}
-              />
-              <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
-              <input
-                type="password"
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.access_code}
-                onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.accessCodePlaceholder')}
-              />
-            </div>
+            {isCreality ? (
+              <div>
+                <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.moonrakerPort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={form.api_port}
+                  onChange={(e) => setForm({ ...form, api_port: e.target.value })}
+                  placeholder="7125"
+                />
+                <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.moonrakerPortHelp')}</p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
+                  <input
+                    type="text"
+                    disabled
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray cursor-not-allowed"
+                    value={printer.serial_number}
+                  />
+                  <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+                  <input
+                    type="password"
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.access_code}
+                    onChange={(e) => setForm({ ...form, access_code: e.target.value })}
+                    placeholder={t('printers.accessCodePlaceholder')}
+                  />
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
               <select
@@ -8575,32 +8688,42 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-                <optgroup label="A2 Series">
-                  <option value="A2L">A2L</option>
-                </optgroup>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P1P">P1P</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P2S">P2S</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1">X1</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1E">X1E</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
+                {isCreality ? (
+                  <optgroup label="Ender-3 V3 Series">
+                    <option value="Ender-3 V3">Ender-3 V3 (CoreXZ)</option>
+                    <option value="Ender-3 V3 KE">Ender-3 V3 KE</option>
+                    <option value="Ender-3 V3 Plus">Ender-3 V3 Plus</option>
+                  </optgroup>
+                ) : (
+                  <>
+                  <optgroup label="A1 Series">
+                    <option value="A1">A1</option>
+                    <option value="A1 Mini">A1 Mini</option>
+                  </optgroup>
+                  <optgroup label="A2 Series">
+                    <option value="A2L">A2L</option>
+                  </optgroup>
+                  <optgroup label="H2 Series">
+                    <option value="H2C">H2C</option>
+                    <option value="H2D">H2D</option>
+                    <option value="H2D Pro">H2D Pro</option>
+                    <option value="H2S">H2S</option>
+                  </optgroup>
+                  <optgroup label="P Series">
+                    <option value="P1P">P1P</option>
+                    <option value="P1S">P1S</option>
+                    <option value="P2S">P2S</option>
+                  </optgroup>
+                  <optgroup label="X1 Series">
+                    <option value="X1">X1</option>
+                    <option value="X1C">X1 Carbon</option>
+                    <option value="X1E">X1E</option>
+                  </optgroup>
+                  <optgroup label="X2 Series">
+                    <option value="X2D">X2D</option>
+                  </optgroup>
+                  </>
+                )}
               </select>
             </div>
             <div>
@@ -9111,11 +9234,16 @@ export function PrintersPage() {
       queryClient.invalidateQueries({ queryKey: ['maintenanceOverview'] });
       setShowAddModal(false);
     },
-    onError: (error: Error) => {
+    onError: (error: Error, variables) => {
       // Localized message when the backend returns a stable error code;
       // the raw message is an English fallback for non-UI clients.
       if (error instanceof ApiError && error.code === 'printer_connection_failed') {
-        showToast(t('printers.toast.connectionFailedNotAdded'), 'error');
+        showToast(
+          t(variables.printer_type === 'creality'
+            ? 'printers.toast.crealityConnectionFailedNotAdded'
+            : 'printers.toast.connectionFailedNotAdded'),
+          'error',
+        );
         return;
       }
       showToast(error.message || t('printers.toast.failedToAdd'), 'error');

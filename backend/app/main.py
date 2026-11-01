@@ -3297,7 +3297,11 @@ async def _capture_snapshot_for_notification(printer_id: int, printer, logger) -
             if len(buffered_frame) <= 2_500_000:
                 return _apply_camera_rotation(buffered_frame, printer, logger)
 
-        # Fresh capture from printer camera
+        # Fresh capture from printer camera. The built-in protocols (chamber-image
+        # port 6000 / RTSP 322) exist only on Bambu printers; a Creality printer's
+        # camera is its external (Moonraker webcam) URL, handled above.
+        if getattr(printer, "printer_type", "bambu") != "bambu":
+            return None
         logger.info("[SNAPSHOT] Capturing fresh frame for printer %s", printer_id)
         from backend.app.services.camera import capture_camera_frame_bytes
 
@@ -6780,7 +6784,7 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
                     "[FINISH-PHOTO-MOMENT] used buffered RTSP frame (%d bytes)",
                     len(frame_bytes),
                 )
-            else:
+            elif getattr(printer, "printer_type", "bambu") == "bambu":
                 from backend.app.services.camera import capture_camera_frame_bytes
 
                 frame_bytes = await capture_camera_frame_bytes(
@@ -7178,7 +7182,8 @@ async def on_print_complete(printer_id: int, data: dict):
                     archive_row = await db.execute(select(PrintArchive.filename).where(PrintArchive.id == archive_id))
                     archive_filename = archive_row.scalar_one_or_none()
 
-            if printer:
+            # Moonraker printers never had a file pushed to an SD card over FTPS.
+            if printer and printer_manager.has_ftp(printer_id):
                 from backend.app.services.bambu_ftp import DeleteResult, delete_file_async
                 from backend.app.utils.filename import derive_remote_filename
 

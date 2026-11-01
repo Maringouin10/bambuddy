@@ -96,6 +96,11 @@ REASON_FTPS_COOLOFF = "ftps_cooloff"
 # knows an attempt was made and failed in transit rather than answering 550.
 REASON_FTP_TRANSFER_FAILED = "ftp_transfer_failed"
 
+# The printer is not a Bambu machine (Creality / Klipper via Moonraker) and has no
+# FTPS service at all, so there is no sliced file to fetch. Permanent, not a
+# transient failure: the archive is a name-and-timing record by design.
+REASON_NO_FTP_SERVICE = "no_ftp_service"
+
 # Where a sliced file has ever been found over FTPS, in the order the sweep in
 # `main.py` tries them -- root first, which is where A1/P1-series uploads land
 # (#972), then `/cache`, which is where the H2D keeps its copy of an eMMC job
@@ -221,6 +226,9 @@ def external_storage_present(state: object | None) -> bool:
     """
     if state is None:
         return True
+    # A Moonraker printer has no FTPS service, so there is nothing to scan.
+    if getattr(state, "ftp_capable", True) is False:
+        return False
     return not (getattr(state, "sdcard_reported", False) and not getattr(state, "sdcard", False))
 
 
@@ -267,6 +275,10 @@ def _internal_reason(project_url: str | None) -> str:
 def _verdict(project_url: str | None, state: object | None) -> StorageVerdict:
     if state is None:
         return _REACHABLE
+
+    # Non-Bambu printers (Moonraker) never offer FTPS; do not sweep for a 3MF.
+    if getattr(state, "ftp_capable", True) is False:
+        return StorageVerdict(reachable=False, reason=REASON_NO_FTP_SERVICE)
 
     # Strongest signal, and specific to the print in question: the dispatcher
     # named the destination.

@@ -349,10 +349,13 @@ export function PrintModal({
   const defaultCostPerKg = settings?.default_filament_cost ?? 0;
   const billingEnabled = settings?.billing_enabled === true;
 
-  const { data: printers, isLoading: loadingPrinters } = useQuery({
+  const { data: allPrinters, isLoading: loadingPrinters } = useQuery({
     queryKey: ['printers'],
     queryFn: api.getPrinters,
   });
+  // Creality (Moonraker) printers are monitor-and-control only for now: Bambuddy cannot
+  // upload a sliced file to them, so they are not offered as print targets.
+  const printers = useMemo(() => allPrinters?.filter((p) => p.printer_type !== 'creality'), [allPrinters]);
 
   const { data: myCostCenters, isLoading: loadingCostCenters } = useQuery({
     queryKey: ['finance', 'cost-centers', 'mine'],
