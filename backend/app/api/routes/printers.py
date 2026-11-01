@@ -176,7 +176,22 @@ async def create_printer(
         ip_address=printer_data.ip_address,
         serial_number=printer_data.serial_number,
         access_code=printer_data.access_code,
+        printer_type=printer_data.printer_type,
+        api_port=printer_data.api_port,
     )
+    if not test_result.get("success") and printer_data.printer_type == "creality":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "printer_connection_failed",
+                "reason": test_result.get("reason"),
+                "message": (
+                    "Could not reach the printer's Moonraker API. Verify the IP address and port "
+                    f"(default {7125}), and that the printer is powered on and on the same network. "
+                    "The printer was not added."
+                ),
+            },
+        )
     if not test_result.get("success"):
         # The frontend renders the user-facing message via i18n on `code`;
         # `message` is an English fallback for non-UI clients (curl / scripts).
@@ -192,7 +207,19 @@ async def create_printer(
             },
         )
 
-    printer = Printer(**printer_data.model_dump())
+    create_fields = printer_data.model_dump()
+    # Pre-fill the camera from the printer's own Moonraker webcam config when the
+    # user did not set one (Creality printers stream MJPEG on the LAN).
+    webcam = test_result.get("webcam") if printer_data.printer_type == "creality" else None
+    if webcam and not create_fields.get("external_camera_url"):
+        if webcam.get("stream_url"):
+            create_fields["external_camera_url"] = webcam["stream_url"]
+            create_fields["external_camera_type"] = "mjpeg"
+            create_fields["external_camera_enabled"] = True
+        if webcam.get("snapshot_url") and not create_fields.get("external_camera_snapshot_url"):
+            create_fields["external_camera_snapshot_url"] = webcam["snapshot_url"]
+
+    printer = Printer(**create_fields)
     db.add(printer)
     await db.commit()
     await db.refresh(printer)
@@ -407,7 +434,7 @@ async def update_printer(
     await db.refresh(printer)
 
     # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "is_active"]):
+    if any(k in update_data for k in ["ip_address", "access_code", "is_active", "api_port"]):
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
@@ -1006,15 +1033,23 @@ async def disconnect_printer(
 @router.post("/test")
 async def test_printer_connection(
     ip_address: str,
-    serial_number: str,
-    access_code: str,
+    serial_number: str = "",
+    access_code: str = "",
+    printer_type: str = "bambu",
+    api_port: int | None = None,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
 ):
     """Test connection to a printer without saving."""
+    if printer_type not in ("bambu", "creality"):
+        raise HTTPException(400, "printer_type must be 'bambu' or 'creality'")
+    if printer_type == "bambu" and (not serial_number or not access_code):
+        raise HTTPException(400, "serial_number and access_code are required for Bambu printers")
     result = await printer_manager.test_connection(
         ip_address=ip_address,
         serial_number=serial_number,
         access_code=access_code,
+        printer_type=printer_type,
+        api_port=api_port,
     )
     return result
 

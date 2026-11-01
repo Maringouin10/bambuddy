@@ -823,6 +823,21 @@ Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool
 | A1 | A1, A1 Mini |
 | A2 | A2L |
 
+### Creality (Klipper / Moonraker) — experimental
+
+Creality printers that run Klipper with Moonraker — **Ender-3 V3** (CoreXZ), **Ender-3 V3 KE** and **Ender-3 V3 Plus** to start with — can be added next to your Bambu printers: choose **Creality** in *Add Printer* and enter the printer's IP address (and the Moonraker port if it is not the default `7125`). No serial number or access code is needed.
+
+| Works | Not yet |
+|-------|---------|
+| Live status (state, progress, time left, layers, temperatures, fan) | Starting a print from Bambuddy (use Creality Print or Fluidd — Bambuddy still archives it) |
+| Print archive, notifications, smart plugs, MQTT relay | The printer's file browser |
+| Pause / resume / stop, nozzle & bed temperature, speed, part fan, light, home, jog | AMS, HMS, K-profiles, drying (Klipper printers do not have them) |
+| Webcam (picked up from Moonraker) | |
+
+This was built against Moonraker's documented API and a simulated printer and has **not been tried on real hardware yet** — please report what you see on your printer.
+
+The **Ender-3 V3 SE** ships with Marlin rather than Klipper, so it has no Moonraker API to connect to unless it has been flashed with Klipper.
+
 ---
 
 ## 🛠️ Tech Stack

@@ -15,6 +15,7 @@ from backend.app.services.bambu_mqtt import (
     PrinterState,
     get_stage_name,
 )
+from backend.app.services.moonraker_client import PRINTER_TYPE_CREALITY, MoonrakerClient
 from backend.app.utils.ams_humidity import ams_humidity_percent
 from backend.app.utils.kprofile_lookup import build_slot_k_resolver
 
@@ -385,7 +386,7 @@ class PrinterManager:
     """Manager for multiple printer connections."""
 
     def __init__(self):
-        self._clients: dict[int, BambuMQTTClient] = {}
+        self._clients: dict[int, BambuMQTTClient | MoonrakerClient] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
         # Last AMS / external-spool reading of a printer whose client has been
@@ -798,6 +799,31 @@ class PrinterManager:
             if self._on_tray_change:
                 self._schedule_async(self._on_tray_change(printer_id, tray_global, layer_num))
 
+        if getattr(printer, "printer_type", None) == PRINTER_TYPE_CREALITY:
+            # Klipper / Moonraker printers (Ender-3 V3 ...) have no AMS, drying
+            # or assignment events, so only the callbacks that apply are wired.
+            client = MoonrakerClient(
+                ip_address=printer.ip_address,
+                serial_number=printer.serial_number,
+                access_code=printer.access_code or "",
+                model=printer.model,
+                port=printer.api_port,
+                on_state_change=on_state_change,
+                on_print_start=on_print_start,
+                on_print_complete=on_print_complete,
+                on_layer_change=on_layer_change,
+                on_print_progress=on_print_progress,
+                on_bed_temp_update=on_bed_temp_update,
+                on_print_running_observed=on_print_running_observed,
+                on_finish_photo_moment=on_finish_photo_moment,
+            )
+            client.connect()
+            self._clients[printer_id] = client
+            self._models[printer_id] = printer.model
+            self._printer_info[printer_id] = PrinterInfo(printer.name, printer.serial_number)
+            await asyncio.sleep(1)
+            return client.state.connected
+
         client = BambuMQTTClient(
             ip_address=printer.ip_address,
             serial_number=printer.serial_number,
@@ -901,7 +927,17 @@ class PrinterManager:
             return client.check_staleness()
         return False
 
-    def get_client(self, printer_id: int) -> BambuMQTTClient | None:
+    def has_ftp(self, printer_id: int) -> bool:
+        """False for Creality / Moonraker printers, which have no FTPS service.
+
+        Callers use it to skip Bambu-only housekeeping (SD-card cleanup, timelapse
+        download, 3MF fetch) that would otherwise burn retries against a port
+        that is never open. Unknown / disconnected printers read as Bambu.
+        """
+        client = self._clients.get(printer_id)
+        return getattr(client, "printer_type", None) != PRINTER_TYPE_CREALITY
+
+    def get_client(self, printer_id: int) -> BambuMQTTClient | MoonrakerClient | None:
         """Get the MQTT client for a printer."""
         return self._clients.get(printer_id)
 
@@ -1096,6 +1132,8 @@ class PrinterManager:
         ip_address: str,
         serial_number: str,
         access_code: str,
+        printer_type: str = "bambu",
+        api_port: int | None = None,
     ) -> dict:
         """Test connection to a printer without persisting.
 
@@ -1107,6 +1145,9 @@ class PrinterManager:
         original synchronous teardown produced the #1445 "Docker container
         hangs" symptom on P1S when called from POST /printers/.
         """
+        if printer_type == PRINTER_TYPE_CREALITY:
+            return await self._test_moonraker(ip_address, serial_number, api_port)
+
         client = BambuMQTTClient(
             ip_address=ip_address,
             serial_number=serial_number,
@@ -1135,6 +1176,32 @@ class PrinterManager:
             await asyncio.to_thread(client.disconnect)
 
         return result
+
+    async def _test_moonraker(self, ip_address: str, serial_number: str, api_port: int | None) -> dict:
+        """Probe a Creality / Klipper printer without persisting it.
+
+        Same result shape as the Bambu probe (``success`` / ``state`` /
+        ``model`` / ``reason``) plus the printer's webcam URLs when it has one,
+        so the add-printer flow can pre-fill the camera.
+        """
+        client = MoonrakerClient(ip_address=ip_address, serial_number=serial_number, port=api_port)
+        try:
+            client.connect()
+            deadline = asyncio.get_running_loop().time() + self.PROBE_TIMEOUT_SECONDS
+            while not client.state.connected and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(self.PROBE_POLL_INTERVAL_SECONDS)
+            connected = client.state.connected
+            webcam = await asyncio.to_thread(client.get_webcam_urls) if connected else None
+            return {
+                "success": connected,
+                "state": client.state.state if connected else None,
+                "model": None,
+                "reason": None if connected else client.last_connect_error,
+                "firmware_version": client.state.firmware_version if connected else None,
+                "webcam": webcam,
+            }
+        finally:
+            await asyncio.to_thread(client.disconnect)
 
 
 def get_derived_status_name(state: PrinterState, model: str | None = None) -> str | None:

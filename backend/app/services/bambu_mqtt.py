@@ -1057,6 +1057,10 @@ class PrinterState:
     # which uses the old protocol path; field not yet found). Consumers must treat
     # None as "no opinion" — preserving today's behaviour, NOT as "disabled".
     ams_filament_backup: bool | None = None
+    # False for printers that are not Bambu machines (Creality / Klipper over
+    # Moonraker): they have no FTPS service, so the archive code must not run
+    # its sliced-file sweep against them. Bambu printers keep the default.
+    ftp_capable: bool = True
 
 
 # Stage name mapping from BambuStudio DeviceManager.cpp
