@@ -905,6 +905,13 @@ export default {
     },
     developerModeWarning: 'Utvecklar-LAN-läge är inte aktiverat på: {{names}}. Vissa funktioner kommer kanske inte att fungera.',
     howToEnable: 'Hur man aktiverar',
+    moonrakerFiles: {
+      empty: 'Inga G-code-filer på skrivaren',
+      loadFailed: 'Det gick inte att läsa in skrivarens filer',
+      printStarted: 'Utskriften har startat',
+      deleted: 'Filen har tagits bort',
+      busy: 'Skrivaren är upptagen',
+    },
     crealityFileTypes: 'Creality-skrivare skriver ut .gcode-filer eller en .3mf som skivats i Creality Print.',
     incompatibleFile: 'Denna fil var slicad för {{slicedFor}}, men denna skrivare är en {{printerModel}}',
     dropNotPrintable: 'Endast .gcode- och .gcode.3mf-filer kan skrivas ut',

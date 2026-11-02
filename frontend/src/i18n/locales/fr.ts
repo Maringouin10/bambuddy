@@ -900,6 +900,13 @@ export default {
     },
     developerModeWarning: 'Le mode développeur LAN n\'est pas activé sur : {{names}}. Certaines fonctionnalités peuvent ne pas fonctionner.',
     howToEnable: 'Comment activer',
+    moonrakerFiles: {
+      empty: 'Aucun fichier G-code sur l\'imprimante',
+      loadFailed: 'Impossible de charger les fichiers de l\'imprimante',
+      printStarted: 'Impression lancée',
+      deleted: 'Fichier supprimé',
+      busy: 'L\'imprimante est occupée',
+    },
     crealityFileTypes: 'Les imprimantes Creality impriment des fichiers .gcode ou un .3mf tranché depuis Creality Print.',
     incompatibleFile: 'Ce fichier a été tranché pour {{slicedFor}}, mais cette imprimante est une {{printerModel}}',
     dropNotPrintable: 'Seuls les fichiers .gcode et .gcode.3mf peuvent être imprimés',

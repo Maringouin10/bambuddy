@@ -900,6 +900,13 @@ export default {
     },
     developerModeWarning: 'Geliştirici LAN modu şunlarda etkin değil: {{names}}. Bazı özellikler çalışmayabilir.',
     howToEnable: 'Nasıl etkinleştirilir',
+    moonrakerFiles: {
+      empty: 'Yazıcıda G-code dosyası yok',
+      loadFailed: 'Yazıcının dosyaları yüklenemedi',
+      printStarted: 'Yazdırma başlatıldı',
+      deleted: 'Dosya silindi',
+      busy: 'Yazıcı meşgul',
+    },
     crealityFileTypes: 'Creality yazıcılar .gcode dosyalarını veya Creality Print ile dilimlenmiş bir .3mf dosyasını yazdırır.',
     incompatibleFile: 'Bu dosya {{slicedFor}} için dilimlendi, ancak bu yazıcı bir {{printerModel}}',
     dropNotPrintable: 'Yalnızca .gcode ve .gcode.3mf dosyaları yazdırılabilir',

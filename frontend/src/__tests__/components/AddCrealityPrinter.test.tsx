@@ -178,7 +178,7 @@ describe('Creality printers', () => {
     expect(diagnosticCalls).toBe(0);
   });
 
-  it('a Creality card keeps the Print button but not the Bambu-only HMS badge or FTP file browser', async () => {
+  it('a Creality card keeps the Print button but not the Bambu-only HMS badge', async () => {
     server.use(http.get('/api/v1/printers/', () => HttpResponse.json([crealityPrinter])));
     render(<PrintersPage />);
     await waitFor(() => expect(screen.getByText('Ender 3 V3 KE')).toBeInTheDocument());

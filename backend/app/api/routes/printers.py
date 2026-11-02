@@ -4210,6 +4210,72 @@ async def clear_hms_errors(
     return {"success": True, "message": "HMS errors cleared"}
 
 
+# =============================================================================
+# Creality / Klipper: the printer's own G-code files (Moonraker)
+# =============================================================================
+
+
+async def _moonraker_client_for(printer_id: int, db: AsyncSession):
+    """The Moonraker client of a Creality printer, or an HTTP error that says why not."""
+    from backend.app.services.moonraker_client import MoonrakerClient
+
+    printer = (await db.execute(select(Printer).where(Printer.id == printer_id))).scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    if printer.printer_type == "bambu":
+        raise HTTPException(400, "This is a Bambu printer: use the FTP file browser")
+    client = printer_manager.get_client(printer_id)
+    if not isinstance(client, MoonrakerClient) or not client.state.connected:
+        raise HTTPException(400, "Printer not connected")
+    return client
+
+
+@router.get("/{printer_id}/moonraker/files")
+async def list_moonraker_files(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    db: AsyncSession = Depends(get_db),
+):
+    """The G-code files stored on a Creality / Klipper printer, newest first."""
+    client = await _moonraker_client_for(printer_id, db)
+    files = await asyncio.to_thread(client.list_gcode_files)
+    return {"files": files, "total": len(files)}
+
+
+@router.post("/{printer_id}/moonraker/files/print")
+async def print_moonraker_file(
+    printer_id: int,
+    path: str = Query(..., min_length=1, max_length=500),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a file that is already on the printer."""
+    client = await _moonraker_client_for(printer_id, db)
+    if client.state.state in ("RUNNING", "PAUSE", "PREPARE", "SLICING"):
+        raise HTTPException(409, "The printer is busy")
+    if path.startswith("/") or ".." in path.split("/"):
+        raise HTTPException(400, "Invalid path")
+    if not await asyncio.to_thread(client.start_print, path):
+        raise HTTPException(500, "The printer did not start the print")
+    return {"success": True, "message": f"Started {path}"}
+
+
+@router.delete("/{printer_id}/moonraker/files")
+async def delete_moonraker_file(
+    printer_id: int,
+    path: str = Query(..., min_length=1, max_length=500),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a file from the printer."""
+    client = await _moonraker_client_for(printer_id, db)
+    if path.startswith("/") or ".." in path.split("/"):
+        raise HTTPException(400, "Invalid path")
+    if not await asyncio.to_thread(client.delete_gcode_file, path):
+        raise HTTPException(500, "The printer did not delete the file (is it the one being printed?)")
+    return {"success": True, "message": f"Deleted {path}"}
+
+
 @router.get("/{printer_id}/print/objects")
 async def get_printable_objects(
     printer_id: int,

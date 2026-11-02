@@ -48,6 +48,8 @@ class FakeMoonraker:
         self.objects = list(OBJECTS)
         self.uploads: list[tuple[str, bytes]] = []
         self.files: dict[str, bytes] = {}
+        self.deleted: list[str] = []
+        self.file_list: list[dict] = []
         self.upload_result = (201, {"item": {"path": "x.gcode", "root": "gcodes"}, "print_started": True})
         self.klipper_state = "ready"
         self.status = {
@@ -106,6 +108,17 @@ class FakeMoonraker:
             return httpx.Response(200, json={"result": {"objects": self.objects}})
         if path == "/printer/objects/query":
             return httpx.Response(200, json={"result": {"status": self.status, "eventtime": 1.0}})
+        if path == "/server/files/list":
+            return httpx.Response(200, json={"result": self.file_list})
+        if request.method == "DELETE" and path.startswith("/server/files/gcodes/"):
+            from urllib.parse import unquote
+
+            key = unquote(path[len("/server/files/gcodes/") :])
+            if key in self.files:
+                del self.files[key]
+                self.deleted.append(key)
+                return httpx.Response(200, json={"result": {"item": {"path": key}}})
+            return httpx.Response(404, json={"error": {"message": "not found"}})
         if path.startswith("/server/files/gcodes/"):
             from urllib.parse import unquote
 
@@ -1337,3 +1350,36 @@ def test_a_printer_without_exclude_object_offers_nothing():
     tick(client)
     assert client.state.printable_objects == {}
     assert client.skip_objects([1]) is False
+
+
+# ---------------------------------------------------------------- printer file browser
+
+
+def test_files_are_listed_newest_first_with_only_the_fields_the_ui_needs():
+    fake = FakeMoonraker()
+    fake.file_list = [
+        {"path": "old.gcode", "modified": 100.0, "size": 10, "permissions": "rw"},
+        {"path": "sub/new.gcode", "modified": 300.5, "size": 2048},
+        {"path": "mid.gcode", "modified": 200.0, "size": None},
+        {"no_path": True},
+    ]
+    client = make_client(fake)
+    tick(client)
+
+    assert client.list_gcode_files() == [
+        {"path": "sub/new.gcode", "size": 2048, "modified": 300.5},
+        {"path": "mid.gcode", "size": 0, "modified": 200.0},
+        {"path": "old.gcode", "size": 10, "modified": 100.0},
+    ]
+
+
+def test_deleting_a_file_hits_the_gcodes_root_and_reports_failure():
+    fake = FakeMoonraker()
+    fake.files["sub dir/a.gcode"] = b"x"
+    client = make_client(fake)
+    tick(client)
+
+    assert client.delete_gcode_file("sub dir/a.gcode") is True
+    assert fake.deleted == ["sub dir/a.gcode"]
+    assert client.delete_gcode_file("sub dir/a.gcode") is False  # already gone
+    assert MoonrakerClient("10.0.0.9", "X").delete_gcode_file("a.gcode") is False  # not connected

@@ -5241,6 +5241,21 @@ export const api = {
     request<{ status: string; path: string }>(`/printers/${printerId}/files?path=${encodeURIComponent(path)}`, {
       method: 'DELETE',
     }),
+  // Creality / Klipper printers: the G-code files on the printer itself (Moonraker)
+  getMoonrakerFiles: (printerId: number) =>
+    request<{ files: Array<{ path: string; size: number; modified: number }>; total: number }>(
+      `/printers/${printerId}/moonraker/files`,
+    ),
+  printMoonrakerFile: (printerId: number, path: string) =>
+    request<{ success: boolean; message: string }>(
+      `/printers/${printerId}/moonraker/files/print?path=${encodeURIComponent(path)}`,
+      { method: 'POST' },
+    ),
+  deleteMoonrakerFile: (printerId: number, path: string) =>
+    request<{ success: boolean; message: string }>(
+      `/printers/${printerId}/moonraker/files?path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' },
+    ),
   getPrinterStorage: (printerId: number) =>
     request<{ used_bytes: number | null; free_bytes: number | null }>(`/printers/${printerId}/storage`),
 

@@ -905,6 +905,13 @@ export default {
     },
     developerModeWarning: 'Developer LAN-modus is niet ingeschakeld op: {{names}}. Sommige functies werken mogelijk niet.',
     howToEnable: 'Inschakelen',
+    moonrakerFiles: {
+      empty: 'Geen G-code-bestanden op de printer',
+      loadFailed: 'De bestanden van de printer konden niet worden geladen',
+      printStarted: 'Print gestart',
+      deleted: 'Bestand verwijderd',
+      busy: 'De printer is bezig',
+    },
     crealityFileTypes: 'Creality-printers printen .gcode-bestanden of een in Creality Print geslicte .3mf.',
     incompatibleFile: 'Dit bestand is gesliced voor {{slicedFor}}, maar deze printer is een {{printerModel}}',
     dropNotPrintable: 'Alleen .gcode- en .gcode.3mf-bestanden kunnen worden afgedrukt',

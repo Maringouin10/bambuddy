@@ -900,6 +900,13 @@ export default {
     },
     developerModeWarning: '以下打印机未启用开发者局域网模式：{{names}}。某些功能可能无法使用。',
     howToEnable: '如何启用',
+    moonrakerFiles: {
+      empty: '打印机上没有 G-code 文件',
+      loadFailed: '无法加载打印机的文件',
+      printStarted: '已开始打印',
+      deleted: '文件已删除',
+      busy: '打印机正忙',
+    },
     crealityFileTypes: 'Creality 打印机打印 .gcode 文件，或用 Creality Print 切片后的 .3mf 文件。',
     incompatibleFile: '此文件是为 {{slicedFor}} 切片的，但该打印机是 {{printerModel}}',
     dropNotPrintable: '只能打印 .gcode 和 .gcode.3mf 文件',

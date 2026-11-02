@@ -857,6 +857,13 @@ export default {
     },
     developerModeWarning: "Режим LAN для разработчиков не включён на: {{names}}. Некоторые функции могут не работать.",
     howToEnable: "Как включить",
+    moonrakerFiles: {
+      empty: 'На принтере нет файлов G-code',
+      loadFailed: 'Не удалось загрузить файлы принтера',
+      printStarted: 'Печать запущена',
+      deleted: 'Файл удалён',
+      busy: 'Принтер занят',
+    },
     crealityFileTypes: 'Принтеры Creality печатают файлы .gcode или нарезанный в Creality Print файл .3mf.',
     incompatibleFile: "Файл подготовлен для {{slicedFor}}, а выбранный принтер — {{printerModel}}",
     dropNotPrintable: "Для печати подходят только файлы .gcode и .gcode.3mf",

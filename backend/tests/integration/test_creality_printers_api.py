@@ -1,6 +1,6 @@
 """Integration tests: adding and reading Creality (Klipper / Moonraker) printers."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -399,3 +399,95 @@ class TestCrealitySkipObjectsAPI:
 
         assert response.status_code == 200, response.text
         client.skip_objects.assert_called_once_with([1])
+
+
+class TestMoonrakerFileBrowserAPI:
+    MANAGER = "backend.app.services.printer_manager.printer_manager"
+
+    def _client(self, **attrs):
+        from backend.app.services.moonraker_client import MoonrakerClient
+
+        client = MagicMock(spec=MoonrakerClient)
+        client.state = PrinterState(connected=True, state="IDLE", ftp_capable=False)
+        for name, value in attrs.items():
+            getattr(client, name).return_value = value
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_listing_returns_the_printers_files(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        client = self._client(list_gcode_files=[{"path": "a.gcode", "size": 5, "modified": 1.0}])
+
+        with patch(f"{self.MANAGER}.get_client", return_value=client):
+            body = (await async_client.get(f"/api/v1/printers/{printer.id}/moonraker/files")).json()
+
+        assert body == {"files": [{"path": "a.gcode", "size": 5, "modified": 1.0}], "total": 1}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_a_bambu_printer_has_no_moonraker_files(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P1S", model="P1S")
+        response = await async_client.get(f"/api/v1/printers/{printer.id}/moonraker/files")
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_printing_a_file_starts_it_on_an_idle_printer(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        client = self._client(start_print=True)
+
+        with patch(f"{self.MANAGER}.get_client", return_value=client):
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/moonraker/files/print", params={"path": "sub/a.gcode"}
+            )
+
+        assert response.status_code == 200, response.text
+        client.start_print.assert_called_once_with("sub/a.gcode")
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_a_busy_printer_refuses_and_nothing_is_sent(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        client = self._client(start_print=True)
+        client.state.state = "RUNNING"
+
+        with patch(f"{self.MANAGER}.get_client", return_value=client):
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/moonraker/files/print", params={"path": "a.gcode"}
+            )
+
+        assert response.status_code == 409
+        client.start_print.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("path", ["/etc/passwd", "../secret.gcode", "a/../../b.gcode"])
+    async def test_paths_that_leave_the_gcodes_root_are_refused(self, async_client: AsyncClient, printer_factory, path):
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        client = self._client(start_print=True, delete_gcode_file=True)
+
+        with patch(f"{self.MANAGER}.get_client", return_value=client):
+            started = await async_client.post(
+                f"/api/v1/printers/{printer.id}/moonraker/files/print", params={"path": path}
+            )
+            deleted = await async_client.delete(f"/api/v1/printers/{printer.id}/moonraker/files", params={"path": path})
+
+        assert started.status_code == 400 and deleted.status_code == 400
+        client.start_print.assert_not_called()
+        client.delete_gcode_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_deleting_a_file_and_the_failure_case(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        ok, bad = self._client(delete_gcode_file=True), self._client(delete_gcode_file=False)
+
+        with patch(f"{self.MANAGER}.get_client", return_value=ok):
+            assert (
+                await async_client.delete(f"/api/v1/printers/{printer.id}/moonraker/files", params={"path": "a.gcode"})
+            ).status_code == 200
+        with patch(f"{self.MANAGER}.get_client", return_value=bad):
+            assert (
+                await async_client.delete(f"/api/v1/printers/{printer.id}/moonraker/files", params={"path": "a.gcode"})
+            ).status_code == 500

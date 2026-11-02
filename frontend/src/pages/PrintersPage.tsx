@@ -191,6 +191,7 @@ import { useToast } from '../contexts/ToastContext';
 import { ChamberLight } from '../components/icons/ChamberLight';
 import { PlateClearedIcon } from '../components/icons/PlateClearedIcon';
 import { SkipObjectsModal, SkipObjectsIcon } from '../components/SkipObjectsModal';
+import { MoonrakerFilesModal } from '../components/MoonrakerFilesModal';
 import { FileUploadModal } from '../components/FileUploadModal';
 import { PrintModal } from '../components/PrintModal';
 import { PrinterInfoModal } from '../components/PrinterInfoModal';
@@ -6731,7 +6732,6 @@ function PrinterCard({
                     onClose={() => setCameraMenuAnchor(null)}
                   />
                 )}
-                {!isCrealityCard && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -6742,7 +6742,6 @@ function PrinterCard({
                 >
                   <HardDrive className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
                 </Button>
-                )}
                 {/* Shown whatever the printer is doing (#2849): this uploads a
                     file and queues it, which a busy or offline printer is no
                     reason to refuse -- it only means the item waits. Hiding it
@@ -6781,10 +6780,18 @@ function PrinterCard({
       </CardContent>
 
       {/* File Manager Modal */}
-      {showFileManager && (
+      {showFileManager && !isCrealityCard && (
         <FileManagerModal
           printerId={printer.id}
           printerName={printer.name}
+          onClose={() => setShowFileManager(false)}
+        />
+      )}
+      {showFileManager && isCrealityCard && (
+        <MoonrakerFilesModal
+          printerId={printer.id}
+          printerName={printer.name}
+          printerBusy={['RUNNING', 'PAUSE', 'PREPARE', 'SLICING'].includes(status?.state ?? '')}
           onClose={() => setShowFileManager(false)}
         />
       )}

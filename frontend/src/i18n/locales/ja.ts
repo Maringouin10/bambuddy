@@ -899,6 +899,13 @@ export default {
     },
     developerModeWarning: '開発者LANモードが有効になっていません: {{names}}。一部の機能が動作しない可能性があります。',
     howToEnable: '有効化方法',
+    moonrakerFiles: {
+      empty: 'プリンターに G-code ファイルがありません',
+      loadFailed: 'プリンターのファイルを読み込めませんでした',
+      printStarted: '印刷を開始しました',
+      deleted: 'ファイルを削除しました',
+      busy: 'プリンターは使用中です',
+    },
     crealityFileTypes: 'Creality プリンターは .gcode ファイル、または Creality Print でスライスした .3mf を印刷します。',
     incompatibleFile: 'このファイルは{{slicedFor}}用にスライスされていますが、このプリンターは{{printerModel}}です',
     dropNotPrintable: '.gcodeおよび.gcode.3mfファイルのみ印刷できます',

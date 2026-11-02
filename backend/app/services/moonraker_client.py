@@ -1061,12 +1061,30 @@ class MoonrakerClient:
         return response.content
 
     def list_gcode_files(self) -> list[dict]:
-        """Files in the printer's ``gcodes`` root: ``[{path, modified, size}]``."""
+        """Files in the printer's ``gcodes`` root, newest first: ``[{path, modified, size}]``."""
         try:
             result = self._request("GET", "/server/files/list?root=gcodes")
         except _ConnectError:
             return []
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            return []
+        files = [
+            {"path": f["path"], "size": int(f.get("size") or 0), "modified": float(f.get("modified") or 0)}
+            for f in result
+            if isinstance(f, dict) and f.get("path")
+        ]
+        return sorted(files, key=lambda f: f["modified"], reverse=True)
+
+    def delete_gcode_file(self, path: str) -> bool:
+        """Delete a file from the printer's ``gcodes`` root. The file being printed cannot be deleted."""
+        if not self.state.connected or self._http is None:
+            return False
+        try:
+            response = self._http.delete(f"{self._base_url}/server/files/gcodes/{quote(path, safe='/')}")
+        except httpx.HTTPError as exc:
+            logger.warning("[%s] Could not delete %s: %s", self.ip_address, path, exc)
+            return False
+        return response.status_code in (200, 204)
 
     def set_bed_temperature(self, target: int) -> bool:
         return self.send_gcode(f"M140 S{int(max(0, target))}")
