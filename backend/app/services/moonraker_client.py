@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import posixpath
 import threading
 import time
 from collections import deque
@@ -969,6 +970,58 @@ class MoonrakerClient:
                     return True
         logger.warning("[%s] Upload of %s failed: %s", self.ip_address, name, self.last_error)
         return False
+
+    def get_file_metadata(self, filename: str) -> dict:
+        """What Moonraker parsed from a file's slicer comments (time, filament, layers, thumbnails ...)."""
+        return self._fetch_file_metadata(filename) if self._http is not None else {}
+
+    def download_gcode(self, filename: str, dest: os.PathLike, max_bytes: int = 300 * 1024 * 1024) -> int | None:
+        """Stream a file from the printer's ``gcodes`` root to ``dest``.
+
+        Returns the bytes written, or None when the file is missing, the printer is unreachable or it is
+        larger than ``max_bytes`` (the partial file is removed).
+        """
+        http = self._http
+        if http is None:
+            return None
+        url = f"{self._base_url}/server/files/gcodes/{quote(filename, safe='/')}"
+        written = 0
+        try:
+            with http.stream("GET", url, timeout=120.0) as response:
+                if response.status_code != 200:
+                    return None
+                declared = int(response.headers.get("content-length") or 0)
+                if declared > max_bytes:
+                    return None
+                with open(dest, "wb") as out:
+                    for chunk in response.iter_bytes(65536):
+                        written += len(chunk)
+                        if written > max_bytes:
+                            raise ValueError("file larger than the allowed size")
+                        out.write(chunk)
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.info("[%s] Could not download %s: %s", self.ip_address, filename, exc)
+            try:
+                os.unlink(dest)
+            except OSError:
+                pass
+            return None
+        return written
+
+    def download_thumbnail(self, filename: str, relative_path: str, max_bytes: int = 5 * 1024 * 1024) -> bytes | None:
+        """A thumbnail Moonraker lists in a file's metadata (its path is relative to the file's folder)."""
+        http = self._http
+        if http is None:
+            return None
+        directory = posixpath.dirname(filename)
+        path = posixpath.join(directory, relative_path) if directory else relative_path
+        try:
+            response = http.get(f"{self._base_url}/server/files/gcodes/{quote(path, safe='/')}", timeout=15.0)
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200 or len(response.content) > max_bytes:
+            return None
+        return response.content
 
     def list_gcode_files(self) -> list[dict]:
         """Files in the printer's ``gcodes`` root: ``[{path, modified, size}]``."""

@@ -47,6 +47,7 @@ class FakeMoonraker:
     def __init__(self):
         self.objects = list(OBJECTS)
         self.uploads: list[tuple[str, bytes]] = []
+        self.files: dict[str, bytes] = {}
         self.upload_result = (201, {"item": {"path": "x.gcode", "root": "gcodes"}, "print_started": True})
         self.klipper_state = "ready"
         self.status = {
@@ -105,6 +106,15 @@ class FakeMoonraker:
             return httpx.Response(200, json={"result": {"objects": self.objects}})
         if path == "/printer/objects/query":
             return httpx.Response(200, json={"result": {"status": self.status, "eventtime": 1.0}})
+        if path.startswith("/server/files/gcodes/"):
+            from urllib.parse import unquote
+
+            key = unquote(path[len("/server/files/gcodes/") :])
+            if key in self.files:
+                return httpx.Response(
+                    200, content=self.files[key], headers={"content-length": str(len(self.files[key]))}
+                )
+            return httpx.Response(404)
         if path == "/server/files/metadata":
             return httpx.Response(200, json={"result": self.metadata})
         if path == "/server/webcams/list":
@@ -1157,3 +1167,47 @@ def test_a_cleared_error_goes_away_when_the_printer_recovers():
     fake.status["webhooks"] = {"state": "ready"}
     tick(client)
     assert client.state.printer_error is None
+
+
+# ---------------------------------------------------------------- downloads (archive enrichment)
+
+
+def test_file_metadata_is_exposed():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    tick(client)
+    assert client.get_file_metadata("benchy.gcode")["layer_count"] == 100
+
+
+def test_download_gcode_streams_the_file_to_disk(tmp_path):
+    fake = FakeMoonraker()
+    fake.files["sub dir/benchy.gcode"] = b"G28\n" * 1000
+    client = make_client(fake)
+    tick(client)
+    dest = tmp_path / "out.gcode"
+
+    assert client.download_gcode("sub dir/benchy.gcode", dest) == 4000
+    assert dest.read_bytes() == b"G28\n" * 1000
+
+
+def test_download_gcode_returns_none_and_leaves_nothing_when_missing_or_too_big(tmp_path):
+    fake = FakeMoonraker()
+    fake.files["big.gcode"] = b"x" * 5000
+    client = make_client(fake)
+    tick(client)
+
+    assert client.download_gcode("absent.gcode", tmp_path / "a.gcode") is None
+    assert client.download_gcode("big.gcode", tmp_path / "b.gcode", max_bytes=1000) is None
+    assert not (tmp_path / "a.gcode").exists() and not (tmp_path / "b.gcode").exists()
+
+
+def test_download_thumbnail_resolves_the_path_against_the_files_folder():
+    fake = FakeMoonraker()
+    fake.files["models/.thumbs/benchy-300x300.png"] = b"\x89PNG-bytes"
+    fake.files[".thumbs/root-300x300.png"] = b"\x89PNG-root"
+    client = make_client(fake)
+    tick(client)
+
+    assert client.download_thumbnail("models/benchy.gcode", ".thumbs/benchy-300x300.png") == b"\x89PNG-bytes"
+    assert client.download_thumbnail("root.gcode", ".thumbs/root-300x300.png") == b"\x89PNG-root"
+    assert client.download_thumbnail("models/benchy.gcode", ".thumbs/none.png") is None

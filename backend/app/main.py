@@ -5170,7 +5170,9 @@ async def on_print_start(printer_id: int, data: dict):
                     filament_type=mqtt_filament_meta.get("filament_type"),
                     filament_color=mqtt_filament_meta.get("filament_color"),
                     extra_data={
-                        "no_3mf_available": True,
+                        # Only a Bambu print is missing something when there is no 3MF; a Klipper
+                        # printer never has one, so it must not feed the "no 3MF" warning banner.
+                        "no_3mf_available": printer_manager.has_ftp(printer_id),
                         # Why the card is empty, when we know -- see above. The
                         # banner reads this to stop telling H2/P2 owners to
                         # switch on a setting that is already on and would not
@@ -5196,6 +5198,16 @@ async def on_print_start(printer_id: int, data: dict):
                 if subtask_name:
                     _active_prints[(printer_id, f"{subtask_name}.3mf")] = fallback_archive.id
                     _active_prints[(printer_id, subtask_name)] = fallback_archive.id
+
+                # A Klipper printer has no 3MF to read: complete the archive from what Moonraker knows
+                # about the file (cover picture, filament, cost) and keep the G-code for reprints.
+                if filename and not printer_manager.has_ftp(printer_id):
+                    from backend.app.services.creality_archive import enrich_archive
+
+                    spawn_background_task(
+                        enrich_archive(fallback_archive.id, printer_id, filename),
+                        name=f"creality-archive-{fallback_archive.id}",
+                    )
 
                 # Record starting energy if smart plug available (#941: persisted column)
                 await _record_energy_start(fallback_archive, printer_id, db, context="fallback")
