@@ -1215,6 +1215,13 @@ class PrinterManager:
                 found = await asyncio.to_thread(client.find_camera, current_stream, current_snapshot)
                 if not found["stream_url"]:
                     logger.info("[%s] No camera found (tried: %s)", printer.ip_address, ", ".join(found["tried"]))
+                    if (printer.model or "").strip().upper().startswith("K2"):
+                        logger.info(
+                            "[%s] The K2's own camera is WebRTC, which Bambuddy cannot show. Install the camera "
+                            "option of the Creality Helper Script (a go2rtc bridge) and Bambuddy will pick it up "
+                            "on the next connection.",
+                            printer.ip_address,
+                        )
                     return
                 if current_stream and found["stream_url"] == current_stream:
                     return  # already correct

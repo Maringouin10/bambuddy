@@ -30,6 +30,7 @@ import logging
 import math
 import os
 import posixpath
+import re
 import threading
 import time
 from collections import deque
@@ -46,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 PRINTER_TYPE_CREALITY = "creality"
 DEFAULT_MOONRAKER_PORT = 7125
+GO2RTC_PORT = 1984
 
 # Reasons a probe/connection can fail; surfaced as ``last_connect_error`` so the
 # add-printer flow can say something more useful than "could not connect".
@@ -376,6 +378,8 @@ class MoonrakerClient:
         self._light_pin: str | None = None
         self._fans: dict[str, FanRef] = {}
         self._has_box = False
+        self._has_exclude = False
+        self._object_names: dict[int, str] = {}
         self._filament_sensors: list[str] = []
         self._unknown_cfs_logged: set[str] = set()
         self._state_before_power_off: str | None = None
@@ -497,6 +501,10 @@ class MoonrakerClient:
         for name in self._filament_sensors:
             if name not in objects:
                 objects.append(name)
+        # Object cancellation: Klipper's exclude_object lists the printed objects and can drop one.
+        self._has_exclude = "exclude_object" in listed
+        if self._has_exclude:
+            objects.append("exclude_object")
         # CFS (K2 series): the multi-filament module is the Klipper `box` object.
         self._has_box = "box" in listed
         if self._has_box:
@@ -571,6 +579,7 @@ class MoonrakerClient:
         self._apply_temperatures(st)
         self._apply_fans_and_speed(st)
         self._apply_cfs(st.get("box"))
+        self._apply_objects(st.get("exclude_object"), new_state)
         self._apply_progress(new_state, filename, stats, sdcard, display, st)
 
         self.state.printer_error = self._printer_error(st, new_state, webhooks, stats)
@@ -639,6 +648,34 @@ class MoonrakerClient:
                 temps["chamber_heating"] = (
                     temps["chamber_target"] > 0 and temps["chamber"] < temps["chamber_target"] - 2
                 )
+
+    def _apply_objects(self, exclude: object, new_state: str) -> None:
+        """Publish the objects of the running print so single ones can be cancelled (EXCLUDE_OBJECT)."""
+        if not self._has_exclude or new_state not in ("RUNNING", "PAUSE") or not isinstance(exclude, dict):
+            self.state.printable_objects = {}
+            self.state.skipped_objects = []
+            self._object_names = {}
+            return
+        listed = [o for o in exclude.get("objects") or [] if isinstance(o, dict) and o.get("name")]
+        excluded = {str(name) for name in exclude.get("excluded_objects") or []}
+        printable: dict[int, dict] = {}
+        names: dict[int, str] = {}
+        skipped: list[int] = []
+        for index, obj in enumerate(listed, start=1):
+            raw = str(obj["name"])
+            names[index] = raw
+            center = obj.get("center") if isinstance(obj.get("center"), (list, tuple)) else None
+            printable[index] = {
+                # slicers append "_id_<n>" to a name: it is noise on the card
+                "name": re.sub(r"_id_\d+$", "", raw) or raw,
+                "x": float(center[0]) if center and len(center) >= 2 else None,
+                "y": float(center[1]) if center and len(center) >= 2 else None,
+            }
+            if raw in excluded:
+                skipped.append(index)
+        self.state.printable_objects = printable
+        self.state.skipped_objects = skipped
+        self._object_names = names
 
     def _apply_cfs(self, box: object) -> None:
         """Present the CFS as AMS units (colour, material, remaining, humidity) in ``raw_data``."""
@@ -1108,8 +1145,16 @@ class MoonrakerClient:
     def register_assignment_verification(self, *_args: object, **_kwargs: object) -> None:
         return None
 
-    def skip_objects(self, object_ids: list[int]) -> bool:  # noqa: ARG002
-        return False
+    def skip_objects(self, object_ids: list[int]) -> bool:
+        """Cancel objects of the running print with Klipper's EXCLUDE_OBJECT (it cannot be undone)."""
+        names = [self._object_names.get(oid) for oid in object_ids]
+        if not names or any(name is None for name in names):
+            return False
+        ok = True
+        for name in names:
+            quoted = f'"{name}"' if re.search(r"\s", name) else name
+            ok = self.send_gcode(f"EXCLUDE_OBJECT NAME={quoted}") and ok
+        return ok
 
     # ------------------------------------------------------------------ camera
 
@@ -1132,6 +1177,16 @@ class MoonrakerClient:
             for stream_path, snapshot_path in ((stream, snapshot),):
                 for base in self._camera_bases(stream_path):
                     pairs.append((base(stream_path), base(snapshot_path) if snapshot_path else None))
+        # A go2rtc bridge (the Creality Helper Script installs one on K2s, whose own camera is WebRTC
+        # and cannot be shown directly) serves any stream it knows as MJPEG and as single frames.
+        for name in self._go2rtc_streams():
+            quoted = quote(name, safe="")
+            pairs.append(
+                (
+                    f"http://{host}:{GO2RTC_PORT}/api/stream.mjpeg?src={quoted}",
+                    f"http://{host}:{GO2RTC_PORT}/api/frame.jpeg?src={quoted}",
+                )
+            )
         # Common places a Creality / Klipper printer serves its camera
         # (mjpg-streamer on 8080, or nginx in front of Fluidd / Mainsail).
         for prefix in (":8080/", "/webcam/", ":4408/webcam/", ":4408/webcam2/", ":8080/webcam/"):
@@ -1143,6 +1198,18 @@ class MoonrakerClient:
                 seen.add(stream)
                 out.append((stream, snapshot))
         return out
+
+    def _go2rtc_streams(self) -> list[str]:
+        """Names of the streams a go2rtc bridge on this printer exposes (empty when there is none)."""
+        http = self._probe_http
+        if http is None:
+            http = self._probe_http = httpx.Client(timeout=3.0, follow_redirects=True)
+        try:
+            response = http.get(f"http://{self.ip_address}:{GO2RTC_PORT}/api/streams")
+            data = response.json() if response.status_code == 200 else {}
+        except (httpx.HTTPError, ValueError):
+            return []
+        return [str(name) for name in data] if isinstance(data, dict) else []
 
     def _camera_bases(self, url: str | None):
         """Absolute URL(s) for an advertised path: as given, or on each web-UI port."""

@@ -4276,7 +4276,8 @@ async def get_printable_objects(
 
     # Only when the disk could not answer: a `reload=true` that the archive
     # satisfied has already refreshed from the file the printer is running.
-    if not client.state.printable_objects:
+    # (A Klipper printer reports its objects live; there is no 3MF on it to download.)
+    if not client.state.printable_objects and printer_manager.has_ftp(printer_id):
         subtask_name = client.state.subtask_name
         if subtask_name:
             from backend.app.services.archive import extract_printable_objects_from_3mf

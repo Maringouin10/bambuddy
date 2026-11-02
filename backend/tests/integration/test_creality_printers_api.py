@@ -354,3 +354,48 @@ class TestPrinterErrorInStatus:
         with patch("backend.app.services.printer_manager.printer_manager.get_status", return_value=state):
             body = (await async_client.get(f"/api/v1/printers/{printer.id}/status")).json()
         assert body["printer_error"] is None
+
+
+class TestCrealitySkipObjectsAPI:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_objects_come_from_the_printer_not_from_a_3mf_over_ftp(
+        self, async_client: AsyncClient, printer_factory
+    ):
+        from unittest.mock import MagicMock
+
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        client = MagicMock()
+        client.state = PrinterState(connected=True, state="RUNNING", ftp_capable=False)
+        client.state.printable_objects = {
+            1: {"name": "Cube", "x": 50.0, "y": 60.0},
+            2: {"name": "Vase", "x": 1.0, "y": 2.0},
+        }
+        client.state.skipped_objects = [2]
+        client.state.subtask_name = "plate"
+        manager = "backend.app.services.printer_manager.printer_manager"
+
+        with patch(f"{manager}.get_client", return_value=client), patch(f"{manager}.has_ftp", return_value=False):
+            body = (
+                await async_client.get(f"/api/v1/printers/{printer.id}/print/objects", params={"reload": True})
+            ).json()
+
+        assert body["total"] == 2 and body["skipped_count"] == 1 and body["is_printing"] is True
+        assert [(o["id"], o["name"], o["skipped"]) for o in body["objects"]] == [(1, "Cube", False), (2, "Vase", True)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_skipping_calls_the_klipper_client(self, async_client: AsyncClient, printer_factory):
+        from unittest.mock import MagicMock
+
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        client = MagicMock()
+        client.state = PrinterState(connected=True, state="RUNNING", ftp_capable=False)
+        client.state.printable_objects = {1: {"name": "Cube"}}
+        client.skip_objects.return_value = True
+
+        with patch("backend.app.services.printer_manager.printer_manager.get_client", return_value=client):
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/print/skip-objects", json=[1])
+
+        assert response.status_code == 200, response.text
+        client.skip_objects.assert_called_once_with([1])

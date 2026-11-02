@@ -1211,3 +1211,129 @@ def test_download_thumbnail_resolves_the_path_against_the_files_folder():
     assert client.download_thumbnail("models/benchy.gcode", ".thumbs/benchy-300x300.png") == b"\x89PNG-bytes"
     assert client.download_thumbnail("root.gcode", ".thumbs/root-300x300.png") == b"\x89PNG-root"
     assert client.download_thumbnail("models/benchy.gcode", ".thumbs/none.png") is None
+
+
+# ---------------------------------------------------------------- K2 camera through a go2rtc bridge
+
+
+def _go2rtc_transport(streams: dict, serving: str):
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "http://192.168.1.50:1984/api/streams":
+            return httpx.Response(200, json=streams)
+        if url.startswith(serving):
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"\xff\xd8jpeg")
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler)
+
+
+def test_a_go2rtc_bridge_gives_the_k2_a_usable_camera():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    client._advertised_webcams = lambda: []
+    client._probe_http = httpx.Client(
+        transport=_go2rtc_transport({"k2plus": {"producers": []}}, "http://192.168.1.50:1984/api/frame.jpeg?src=k2plus")
+    )
+
+    found = client.find_camera()
+
+    assert found["verified"] is True
+    assert found["stream_url"] == "http://192.168.1.50:1984/api/stream.mjpeg?src=k2plus"
+    assert found["snapshot_url"] == "http://192.168.1.50:1984/api/frame.jpeg?src=k2plus"
+
+
+def test_a_stream_name_with_odd_characters_is_quoted():
+    client = make_client(FakeMoonraker())
+    client._advertised_webcams = lambda: []
+    client._probe_http = httpx.Client(
+        transport=_go2rtc_transport({"my cam/1": {}}, "http://192.168.1.50:1984/api/frame")
+    )
+    assert client.find_camera()["stream_url"] == "http://192.168.1.50:1984/api/stream.mjpeg?src=my%20cam%2F1"
+
+
+def test_no_go2rtc_means_no_extra_candidates_and_no_error():
+    client = make_client(FakeMoonraker())
+    client._advertised_webcams = lambda: []
+    client._probe_http = httpx.Client(transport=image_server())
+    assert client._go2rtc_streams() == []
+    assert all(":1984" not in stream for stream, _ in client._camera_candidates(None))
+
+
+# ---------------------------------------------------------------- cancel objects (exclude_object)
+
+
+def _exclude_fake(excluded=()):
+    fake = FakeMoonraker()
+    fake.objects = [*OBJECTS, "exclude_object"]
+    fake.status["exclude_object"] = {
+        "objects": [
+            {"name": "Cube_id_0", "center": [50.0, 60.0], "polygon": []},
+            {"name": "Cube_id_1", "center": [150.5, 60.0], "polygon": []},
+            {"name": "My part", "center": [100.0, 120.0], "polygon": []},
+        ],
+        "excluded_objects": list(excluded),
+        "current_object": "Cube_id_0",
+    }
+    return fake
+
+
+def test_the_objects_of_a_running_print_are_published_for_the_skip_dialog():
+    fake = _exclude_fake()
+    fake.set_print("printing", progress=0.2, duration=100.0)
+    client = make_client(fake)
+    tick(client)
+
+    objects = client.state.printable_objects
+    assert objects[1] == {"name": "Cube", "x": 50.0, "y": 60.0}
+    assert objects[2]["x"] == 150.5
+    assert objects[3]["name"] == "My part"
+    assert client.state.skipped_objects == []
+
+
+def test_already_excluded_objects_are_reported_as_skipped():
+    fake = _exclude_fake(excluded=["Cube_id_1"])
+    fake.set_print("printing", progress=0.2, duration=100.0)
+    client = make_client(fake)
+    tick(client)
+    assert client.state.skipped_objects == [2]
+
+
+def test_no_objects_are_offered_when_nothing_is_printing():
+    fake = _exclude_fake()
+    client = make_client(fake)
+    tick(client)
+    assert client.state.printable_objects == {}
+    assert client.state.skipped_objects == []
+
+
+def test_skipping_sends_exclude_object_by_the_slicers_own_name_quoting_when_needed():
+    fake = _exclude_fake()
+    fake.set_print("printing", progress=0.2, duration=100.0)
+    client = make_client(fake)
+    tick(client)
+
+    assert client.skip_objects([2, 3]) is True
+    assert [b["script"] for p, b, _ in fake.posts] == [
+        "EXCLUDE_OBJECT NAME=Cube_id_1",
+        'EXCLUDE_OBJECT NAME="My part"',
+    ]
+
+
+def test_skipping_an_unknown_object_or_nothing_is_refused():
+    fake = _exclude_fake()
+    fake.set_print("printing", progress=0.2, duration=100.0)
+    client = make_client(fake)
+    tick(client)
+    assert client.skip_objects([99]) is False
+    assert client.skip_objects([]) is False
+    assert fake.posts == []
+
+
+def test_a_printer_without_exclude_object_offers_nothing():
+    fake = FakeMoonraker()
+    fake.set_print("printing", progress=0.2, duration=100.0)
+    client = make_client(fake)
+    tick(client)
+    assert client.state.printable_objects == {}
+    assert client.skip_objects([1]) is False
