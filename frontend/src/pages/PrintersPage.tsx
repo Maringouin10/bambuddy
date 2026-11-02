@@ -3903,7 +3903,7 @@ function PrinterCard({
             <div className="flex items-center gap-3 min-w-0 flex-1">
               {/* Printer Model Image */}
               <img
-                src={getPrinterImage(printer.model)}
+                src={getPrinterImage(printer.model, printer.printer_type)}
                 alt={printer.model || t('common.printer')}
                 className={`object-contain rounded-lg flex-shrink-0 ${getImageSize()}`}
               />
@@ -4555,7 +4555,11 @@ function PrinterCard({
               // as `isExhaustModel ? exhaust_fan_present : hasChamberFan` the
               // P2S/X2D entries in MODELS_WITH_CHAMBER_FAN became unreachable,
               // which reads as if removing them were safe.
-              const showChamberFan = hasChamberFan && (!isExhaustModel || status.exhaust_fan_present);
+              // Creality / Klipper printers report whichever fans they really have (null = none),
+              // so show exactly those instead of a fixed set of Bambu badges.
+              const showChamberFan = isCrealityCard
+                ? status.big_fan2_speed != null
+                : hasChamberFan && (!isExhaustModel || status.exhaust_fan_present);
               const fanItems: {
                 key: string;
                 label: string;
@@ -4563,13 +4567,17 @@ function PrinterCard({
                 Icon: typeof Fan;
                 activeClass: string;
               }[] = [
-                {
-                  key: 'part',
-                  label: t('printers.fans.partCooling'),
-                  value: status.cooling_fan_speed ?? 0,
-                  Icon: Fan,
-                  activeClass: 'text-cyan-600 dark:text-cyan-400',
-                },
+                ...(!isCrealityCard || status.cooling_fan_speed != null
+                  ? [
+                      {
+                        key: 'part',
+                        label: t('printers.fans.partCooling'),
+                        value: status.cooling_fan_speed ?? 0,
+                        Icon: Fan,
+                        activeClass: 'text-cyan-600 dark:text-cyan-400',
+                      },
+                    ]
+                  : []),
                 // Left auxiliary part cooling fan (optional P2S/X2D accessory).
                 // Only reported (non-null) when the firmware lists airduct part
                 // id 10, i.e. when the fan is physically installed. Placed
@@ -4586,13 +4594,17 @@ function PrinterCard({
                       },
                     ]
                   : []),
-                {
-                  key: 'aux',
-                  label: t('printers.fans.auxiliary'),
-                  value: status.big_fan1_speed ?? 0,
-                  Icon: Wind,
-                  activeClass: 'text-blue-600 dark:text-blue-400',
-                },
+                ...(!isCrealityCard || status.big_fan1_speed != null
+                  ? [
+                      {
+                        key: 'aux',
+                        label: t('printers.fans.auxiliary'),
+                        value: status.big_fan1_speed ?? 0,
+                        Icon: Wind,
+                        activeClass: 'text-blue-600 dark:text-blue-400',
+                      },
+                    ]
+                  : []),
                 ...(showChamberFan
                   ? [
                       {

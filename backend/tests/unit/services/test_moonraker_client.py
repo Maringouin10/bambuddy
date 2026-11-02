@@ -15,9 +15,12 @@ from backend.app.schemas.printer import PrinterCreate
 from backend.app.services.moonraker_client import (
     ERROR_NOT_MOONRAKER,
     ERROR_UNAUTHORIZED,
+    FanRef,
     MoonrakerClient,
     _ConnectError,
     _slug_name,
+    discover_fans,
+    fan_percent,
     speed_percent_to_level,
 )
 from backend.app.services.print_storage import REASON_NO_FTP_SERVICE, print_file_reachable_over_ftp
@@ -40,6 +43,7 @@ class FakeMoonraker:
     """A tiny in-memory Moonraker: serves /printer/info, objects/list, query, files."""
 
     def __init__(self):
+        self.objects = list(OBJECTS)
         self.klipper_state = "ready"
         self.status = {
             "print_stats": {"state": "standby", "filename": "", "print_duration": 0.0, "info": {}},
@@ -90,7 +94,7 @@ class FakeMoonraker:
                 },
             )
         if path == "/printer/objects/list":
-            return httpx.Response(200, json={"result": {"objects": OBJECTS}})
+            return httpx.Response(200, json={"result": {"objects": self.objects}})
         if path == "/printer/objects/query":
             return httpx.Response(200, json={"result": {"status": self.status, "eventtime": 1.0}})
         if path == "/server/files/metadata":
@@ -467,13 +471,83 @@ def test_chamber_light_uses_discovered_output_pin():
     assert fake.posts[-1][1] == {"script": "SET_PIN PIN=LED VALUE=1"}
 
 
-def test_webcam_urls_are_made_absolute():
+def image_server(*serving: str):
+    """A transport that answers 200 image/jpeg for the given URL prefixes and 404 otherwise."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if any(str(request.url).startswith(u) for u in serving):
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"\xff\xd8jpeg")
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler)
+
+
+def test_camera_is_found_where_it_really_answers_not_where_it_is_advertised():
+    """Moonraker advertises a relative path; the image lives behind Fluidd's port 4408."""
     fake = FakeMoonraker()
     client = make_client(fake)
-    assert client.get_webcam_urls() == {
-        "stream_url": "http://192.168.1.50/webcam/?action=stream",
-        "snapshot_url": "http://192.168.1.50/webcam/?action=snapshot",
-    }
+    client._probe_http = httpx.Client(transport=image_server("http://192.168.1.50:4408/webcam/?action=snapshot"))
+
+    found = client.find_camera()
+
+    assert found["verified"] is True
+    assert found["stream_url"] == "http://192.168.1.50:4408/webcam/?action=stream"
+    assert found["snapshot_url"] == "http://192.168.1.50:4408/webcam/?action=snapshot"
+
+
+def test_camera_falls_back_to_the_mjpg_streamer_port_when_moonraker_advertises_nothing():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    client._advertised_webcams = lambda: []
+    client._probe_http = httpx.Client(transport=image_server("http://192.168.1.50:8080/?action=snapshot"))
+
+    found = client.find_camera()
+
+    assert found["verified"] is True
+    assert found["stream_url"] == "http://192.168.1.50:8080/?action=stream"
+
+
+def test_a_working_configured_camera_is_kept_over_other_candidates():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    client._probe_http = httpx.Client(transport=image_server("http://cam.lan/snap", "http://192.168.1.50:8080/"))
+
+    found = client.find_camera("http://cam.lan/stream", "http://cam.lan/snap")
+
+    assert found["stream_url"] == "http://cam.lan/stream"
+    assert found["verified"] is True
+
+
+def test_unreachable_camera_returns_the_advertised_pair_unverified_and_lists_what_was_tried():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    client._probe_http = httpx.Client(transport=image_server())  # nothing answers
+
+    found = client.find_camera()
+
+    assert found["verified"] is False
+    assert found["stream_url"] == "http://192.168.1.50/webcam/?action=stream"
+    assert "http://192.168.1.50:8080/?action=snapshot" in found["tried"]
+
+
+def test_no_camera_anywhere_gives_none():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    client._advertised_webcams = lambda: []
+    client._probe_http = httpx.Client(transport=image_server())
+    assert client.get_webcam_urls() is None
+    assert client.find_camera()["stream_url"] is None
+
+
+def test_a_mjpeg_stream_content_type_counts_as_a_camera():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "multipart/x-mixed-replace;boundary=x"}, content=b"--x")
+
+    client._probe_http = httpx.Client(transport=httpx.MockTransport(handler))
+    assert client._responds_with_image("http://192.168.1.50:8080/?action=stream") is True
 
 
 def test_debug_log_records_traffic_when_enabled():
@@ -606,6 +680,7 @@ async def test_manager_probe_returns_reason_and_webcam():
     def connect(self, loop=None):
         # drive one synchronous handshake+poll instead of starting the thread
         self._http = httpx.Client(transport=httpx.MockTransport(fake.handler))
+        self._probe_http = httpx.Client(transport=image_server())  # no camera answers
         tick(self)
 
     with patch.object(MoonrakerClient, "__init__", init), patch.object(MoonrakerClient, "connect", connect):
@@ -637,3 +712,98 @@ async def test_manager_probe_failure_carries_reason():
 
 async def _instant(*_a, **_kw):
     return None
+
+
+# ---------------------------------------------------------------- fans
+
+
+def test_discover_fans_stock_klipper_layout():
+    roles = discover_fans(["extruder", "fan", "heater_fan hotend_fan", "controller_fan board_fan", "output_pin LED"])
+    assert roles["part"] == FanRef("fan", "fan", "")
+    assert roles["heatbreak"].obj == "heater_fan hotend_fan"
+    assert roles["chamber"].obj == "controller_fan board_fan"
+    assert "aux" not in roles
+
+
+@pytest.mark.parametrize("kind", ["output_pin", "fan_generic"])
+def test_discover_fans_creality_style_fan0_fan1_fan2(kind):
+    roles = discover_fans(
+        ["extruder", f"{kind} fan2", f"{kind} fan0", f"{kind} fan1", "output_pin LED", "output_pin beeper"]
+    )
+    assert roles["part"].obj == f"{kind} fan0"
+    assert roles["aux"].obj == f"{kind} fan1"
+    assert roles["chamber"].obj == f"{kind} fan2"
+
+
+def test_discover_fans_ignores_non_fan_output_pins_and_missing_roles():
+    assert discover_fans(["output_pin LED", "output_pin beeper", "extruder"]) == {}
+
+
+def test_discover_fans_never_assigns_one_object_to_two_roles():
+    roles = discover_fans(["fan", "fan_generic fan0"])
+    assert roles["part"].obj == "fan"
+    assert len({r.obj for r in roles.values()}) == len(roles)
+
+
+def test_fan_percent_handles_both_object_shapes_and_scales():
+    assert fan_percent(FanRef("fan", "fan", ""), {"speed": 0.4}) == 40
+    assert fan_percent(FanRef("output_pin", "output_pin fan0", "fan0"), {"value": 1.0}) == 100
+    assert fan_percent(FanRef("output_pin", "output_pin fan0", "fan0"), {"value": 128}) == 50  # 0-255 scale
+    assert fan_percent(FanRef("fan", "fan", ""), {}) is None
+    assert fan_percent(FanRef("fan", "fan", ""), {"speed": None}) is None
+
+
+def make_creality_fan_fake(kind="output_pin"):
+    fake = FakeMoonraker()
+    fake.objects = [o for o in OBJECTS if o != "fan"] + [f"{kind} fan0", f"{kind} fan1", f"{kind} fan2"]
+    del fake.status["fan"]
+    value_key = "value" if kind == "output_pin" else "speed"
+    fake.status[f"{kind} fan0"] = {value_key: 1.0}
+    fake.status[f"{kind} fan1"] = {value_key: 0.5}
+    fake.status[f"{kind} fan2"] = {value_key: 0.0}
+    return fake
+
+
+def test_fans_without_a_plain_fan_object_are_read_and_stay_current():
+    """Regression: a printer with fan0/fan1/fan2 instead of [fan] showed fans stuck at 0."""
+    fake = make_creality_fan_fake()
+    client = make_client(fake)
+    tick(client)
+
+    s = client.state
+    assert (s.cooling_fan_speed, s.big_fan1_speed, s.big_fan2_speed) == (100, 50, 0)
+    assert s.raw_data["fans"] == {"part": "output_pin fan0", "aux": "output_pin fan1", "chamber": "output_pin fan2"}
+
+    fake.status["output_pin fan0"]["value"] = 0.3
+    fake.status["output_pin fan2"]["value"] = 1.0
+    tick(client)
+    assert (s.cooling_fan_speed, s.big_fan1_speed, s.big_fan2_speed) == (30, 50, 100)
+
+
+def test_fan_commands_follow_the_object_kind_found():
+    fake = make_creality_fan_fake("fan_generic")
+    client = make_client(fake)
+    tick(client)
+    assert client.set_fan_speed(1, 255) and client.set_fan_speed(2, 128) and client.set_fan_speed(3, 0)
+    assert [b["script"] for p, b, _ in fake.posts] == [
+        "SET_FAN_SPEED FAN=fan0 SPEED=1.0",
+        "SET_FAN_SPEED FAN=fan1 SPEED=0.502",
+        "SET_FAN_SPEED FAN=fan2 SPEED=0.0",
+    ]
+
+    pins = make_creality_fan_fake("output_pin")
+    c2 = make_client(pins)
+    tick(c2)
+    assert c2.set_fan_speed(2, 255)
+    assert pins.posts[-1][1] == {"script": "SET_PIN PIN=fan1 VALUE=1.0"}
+
+
+def test_a_printer_with_no_fans_reports_none_and_refuses_fan_commands():
+    fake = FakeMoonraker()
+    fake.objects = [o for o in OBJECTS if o != "fan"]
+    del fake.status["fan"]
+    client = make_client(fake)
+    tick(client)
+    assert client.state.cooling_fan_speed is None
+    assert client.set_fan_speed(1, 100) is False
+    assert fake.posts == []

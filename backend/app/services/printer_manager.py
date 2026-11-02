@@ -410,6 +410,8 @@ class PrinterManager:
         self._on_assignment_verified: Callable[[int, int, int, bool, dict], None] | None = None
         self._on_tray_change: Callable[[int, int, int], None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Fire-and-forget housekeeping tasks, held so they are not garbage collected mid-flight.
+        self._background_tasks: set[asyncio.Task] = set()
         # Track who started the current print (Issue #206)
         self._current_print_user: dict[int, dict] = {}  # {printer_id: {"user_id": int, "username": str}}
         # Track printers awaiting plate-clear acknowledgment after a finished/failed print.
@@ -821,6 +823,9 @@ class PrinterManager:
             self._clients[printer_id] = client
             self._models[printer_id] = printer.model
             self._printer_info[printer_id] = PrinterInfo(printer.name, printer.serial_number)
+            task = asyncio.get_running_loop().create_task(self._autodetect_camera(printer_id))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
             await asyncio.sleep(1)
             return client.state.connected
 
@@ -1176,6 +1181,55 @@ class PrinterManager:
             await asyncio.to_thread(client.disconnect)
 
         return result
+
+    async def _autodetect_camera(self, printer_id: int) -> None:
+        """Make sure a Creality printer's camera points at something that answers.
+
+        Runs on every (re)connect. A camera the user set up that still works is
+        left alone; an empty or dead one is replaced by whichever candidate
+        really serves an image (see ``MoonrakerClient.find_camera``). Never
+        raises: a printer without a camera is normal.
+        """
+        try:
+            client = self._clients.get(printer_id)
+            if not isinstance(client, MoonrakerClient):
+                return
+            for _ in range(30):  # wait for the first successful poll
+                if client.state.connected or self._clients.get(printer_id) is not client:
+                    break
+                await asyncio.sleep(1)
+            if not client.state.connected:
+                return
+
+            from backend.app.core.database import async_session
+
+            async with async_session() as db:
+                printer = await db.get(Printer, printer_id)
+                if printer is None:
+                    return
+                current_stream, current_snapshot = printer.external_camera_url, printer.external_camera_snapshot_url
+                found = await asyncio.to_thread(client.find_camera, current_stream, current_snapshot)
+                if not found["stream_url"]:
+                    logger.info("[%s] No camera found (tried: %s)", printer.ip_address, ", ".join(found["tried"]))
+                    return
+                if current_stream and found["stream_url"] == current_stream:
+                    return  # already correct
+                if current_stream and not found["verified"]:
+                    return  # the one configured may just be offline; do not swap it for a guess
+                printer.external_camera_url = found["stream_url"]
+                printer.external_camera_snapshot_url = found["snapshot_url"]
+                printer.external_camera_type = "mjpeg"
+                printer.external_camera_enabled = True
+                await db.commit()
+                logger.info(
+                    "[%s] Camera %s: %s (verified=%s)",
+                    printer.ip_address,
+                    "replaced" if current_stream else "detected",
+                    found["stream_url"],
+                    found["verified"],
+                )
+        except Exception:  # noqa: BLE001 - housekeeping must never break connecting a printer
+            logger.warning("Camera auto-detect failed for printer %s", printer_id, exc_info=True)
 
     async def _test_moonraker(self, ip_address: str, serial_number: str, api_port: int | None) -> dict:
         """Probe a Creality / Klipper printer without persisting it.

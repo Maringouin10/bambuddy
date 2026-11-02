@@ -1,6 +1,10 @@
-export function getPrinterImage(model: string | null | undefined): string {
+export function getPrinterImage(model: string | null | undefined, printerType?: string | null): string {
+  const m = (model ?? '').toLowerCase().replace(/\s+/g, '');
+  // Creality (Klipper) printers: the Ender-3 V3 family shares one picture.
+  if (printerType === 'creality' || m.includes('ender') || m.includes('creality')) {
+    return '/img/printers/ender3v3.png';
+  }
   if (!model) return '/img/printers/default.png';
-  const m = model.toLowerCase().replace(/\s+/g, '');
   if (m.includes('x1e')) return '/img/printers/x1e.png';
   if (m.includes('x1c') || m.includes('x1carbon')) return '/img/printers/x1c.png';
   if (m.includes('x1')) return '/img/printers/x1c.png';

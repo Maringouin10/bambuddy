@@ -12,6 +12,24 @@ import { getPrinterImage, isGcodeCompatible, filterCompatibleQueueItems } from '
 import type { PrintQueueItem } from '../../api/client';
 
 describe('getPrinterImage', () => {
+  describe('Creality (Klipper)', () => {
+    it('uses the Ender-3 V3 picture for every Creality model', () => {
+      for (const model of ['Ender-3 V3', 'Ender-3 V3 KE', 'Ender-3 V3 Plus', 'ender3v3plus']) {
+        expect(getPrinterImage(model)).toBe('/img/printers/ender3v3.png');
+      }
+    });
+
+    it('uses it for a Creality printer whose model was left blank', () => {
+      expect(getPrinterImage(null, 'creality')).toBe('/img/printers/ender3v3.png');
+      expect(getPrinterImage('', 'creality')).toBe('/img/printers/ender3v3.png');
+    });
+
+    it('leaves Bambu printers alone', () => {
+      expect(getPrinterImage('X1C', 'bambu')).toBe('/img/printers/x1c.png');
+      expect(getPrinterImage(null)).toBe('/img/printers/default.png');
+    });
+  });
+
   describe('X2D (#988)', () => {
     it('resolves display name "X2D" to x2d.png', () => {
       expect(getPrinterImage('X2D')).toBe('/img/printers/x2d.png');

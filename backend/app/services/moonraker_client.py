@@ -33,6 +33,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -75,6 +76,78 @@ SPEED_PERCENT_LEVEL = [(75, 1), (112, 2), (145, 3)]  # <= threshold -> level, el
 # config does not make the whole query fail.
 CORE_OBJECTS = ("print_stats", "virtual_sdcard", "extruder", "heater_bed")
 OPTIONAL_OBJECTS = ("display_status", "fan", "gcode_move", "toolhead", "webhooks", "idle_timeout")
+
+
+@dataclass(frozen=True)
+class FanRef:
+    """A fan Klipper exposes, and how to read/drive it."""
+
+    kind: str  # "fan", "fan_generic", "output_pin", "heater_fan", "controller_fan", "temperature_fan"
+    obj: str  # full Klipper object name, e.g. "output_pin fan0"
+    name: str  # short name ("" for the plain [fan] section)
+
+
+_FAN_KINDS = ("fan_generic", "output_pin", "heater_fan", "controller_fan", "temperature_fan")
+
+
+def discover_fans(listed: list[str]) -> dict[str, FanRef]:
+    """Map Bambuddy's fan roles (part / aux / chamber / heatbreak) onto Klipper objects.
+
+    Printers name their fans differently: stock Klipper has one ``[fan]``, while
+    Creality firmware usually uses ``fan0`` (model), ``fan1`` (side/aux) and
+    ``fan2`` (case), as ``output_pin`` or ``fan_generic`` objects. Rather than
+    assume one layout, look at what the printer says it has. A role the printer
+    lacks is simply absent, and the card hides that badge.
+    """
+    candidates: list[FanRef] = []
+    for obj in listed:
+        kind, _, name = obj.partition(" ")
+        if obj == "fan":
+            candidates.append(FanRef("fan", obj, ""))
+        elif kind in _FAN_KINDS:
+            if kind == "output_pin" and "fan" not in name.lower():
+                continue  # an output_pin that is not a fan (LED, beeper ...)
+            candidates.append(FanRef(kind, obj, name))
+
+    used: set[str] = set()
+
+    def pick(pred) -> FanRef | None:
+        for ref in candidates:
+            if ref.obj not in used and pred(ref):
+                used.add(ref.obj)
+                return ref
+        return None
+
+    def named(*words: str):
+        return lambda r: any(w in r.name.lower() for w in words)
+
+    manual = ("fan_generic", "output_pin")
+    roles: dict[str, FanRef] = {}
+    part = (
+        pick(lambda r: r.kind == "fan")
+        or pick(lambda r: r.kind in manual and r.name.lower() == "fan0")
+        or pick(lambda r: r.kind in manual and named("part", "model", "cooling")(r))
+    )
+    aux = pick(lambda r: r.kind in manual and (r.name.lower() == "fan1" or named("aux", "side")(r)))
+    chamber = pick(
+        lambda r: r.kind in manual and (r.name.lower() == "fan2" or named("case", "chamber", "exhaust", "cabinet")(r))
+    ) or pick(lambda r: r.kind == "controller_fan")
+    heatbreak = pick(lambda r: r.kind == "heater_fan")
+    for role, ref in (("part", part), ("aux", aux), ("chamber", chamber), ("heatbreak", heatbreak)):
+        if ref:
+            roles[role] = ref
+    return roles
+
+
+def fan_percent(ref: FanRef, status: dict) -> int | None:
+    """0-100 for a polled fan object, or None when the printer did not report it."""
+    key = "value" if ref.kind == "output_pin" else "speed"
+    if key not in status or status[key] is None:
+        return None
+    value = float(status[key])
+    if value > 1.0:  # an output_pin with a 0-255 scale
+        value /= 255.0
+    return max(0, min(100, int(round(value * 100))))
 
 
 def _slug_name(filename: str | None) -> str | None:
@@ -151,6 +224,7 @@ class MoonrakerClient:
 
         self._base_url = f"http://{ip_address}:{self.port}"
         self._http: httpx.Client | None = None
+        self._probe_http: httpx.Client | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -158,6 +232,7 @@ class MoonrakerClient:
         self._handshake_done = False
         self._query_objects: list[str] = list(CORE_OBJECTS)
         self._light_pin: str | None = None
+        self._fans: dict[str, FanRef] = {}
         self._state_before_power_off: str | None = None
 
         # print lifecycle tracking (mirrors BambuMQTTClient's bookkeeping)
@@ -193,11 +268,13 @@ class MoonrakerClient:
         if thread and timeout and thread is not threading.current_thread():
             thread.join(timeout)
         http, self._http = self._http, None
-        if http is not None:
-            try:
-                http.close()
-            except Exception:  # noqa: BLE001 - best effort teardown
-                pass
+        probe, self._probe_http = self._probe_http, None
+        for client in (http, probe):
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001 - best effort teardown
+                    pass
         self.state.connected = False
 
     def _run(self) -> None:
@@ -265,6 +342,17 @@ class MoonrakerClient:
                 objects.append(name)
                 self._chamber_object = name
                 break
+        # Fans: query exactly the ones this printer has.
+        self._fans = discover_fans(listed)
+        for ref in self._fans.values():
+            if ref.obj not in objects:
+                objects.append(ref.obj)
+        self.state.raw_data["fans"] = {role: ref.obj for role, ref in self._fans.items()}
+        logger.info(
+            "[%s] Moonraker fans: %s",
+            self.ip_address,
+            ", ".join(f"{role}={ref.obj}" for role, ref in self._fans.items()) or "none found",
+        )
         self._query_objects = objects
         self._light_pin = next(
             (
@@ -368,9 +456,17 @@ class MoonrakerClient:
                 temps["chamber_target"] = round(float(ch.get("target") or 0.0), 1)
 
     def _apply_fans_and_speed(self, st: dict) -> None:
-        fan = st.get("fan") or {}
-        if "speed" in fan:
-            self.state.cooling_fan_speed = int(round(float(fan["speed"]) * 100))
+        for role, attr in (
+            ("part", "cooling_fan_speed"),
+            ("aux", "big_fan1_speed"),
+            ("chamber", "big_fan2_speed"),
+            ("heatbreak", "heatbreak_fan_speed"),
+        ):
+            ref = self._fans.get(role)
+            if ref is not None:
+                percent = fan_percent(ref, st.get(ref.obj) or {})
+                if percent is not None:
+                    setattr(self.state, attr, percent)
         gm = st.get("gcode_move") or {}
         if "speed_factor" in gm:
             self.state.speed_level = speed_percent_to_level(float(gm["speed_factor"]) * 100)
@@ -656,9 +752,19 @@ class MoonrakerClient:
         return self.send_gcode(f"M220 S{percent}") if percent else False
 
     def set_fan_speed(self, fan: int, speed: int) -> bool:
-        if fan != 1:
-            return False  # only the part-cooling fan is addressable on stock Klipper
-        return self.send_gcode(f"M106 S{max(0, min(255, int(speed)))}")
+        """Fan index as in Bambu's API: 1 part cooling, 2 auxiliary, 3 chamber/case. Speed 0-255."""
+        ref = self._fans.get({1: "part", 2: "aux", 3: "chamber"}.get(fan, ""))
+        if ref is None:
+            return False  # this printer has no such fan
+        speed = max(0, min(255, int(speed)))
+        fraction = round(speed / 255, 3)
+        if ref.kind == "fan":
+            return self.send_gcode(f"M106 S{speed}")
+        if ref.kind == "fan_generic":
+            return self.send_gcode(f"SET_FAN_SPEED FAN={ref.name} SPEED={fraction}")
+        if ref.kind == "output_pin":
+            return self.send_gcode(f"SET_PIN PIN={ref.name} VALUE={fraction}")
+        return False  # heater_fan / controller_fan switch themselves
 
     def set_part_fan(self, speed: int) -> bool:
         return self.set_fan_speed(1, speed)
@@ -697,29 +803,94 @@ class MoonrakerClient:
 
     # ------------------------------------------------------------------ camera
 
-    def get_webcam_urls(self) -> dict | None:
-        """First webcam Moonraker knows about, as absolute URLs, or None."""
+    def _advertised_webcams(self) -> list[tuple[str | None, str | None]]:
+        """(stream, snapshot) pairs from Moonraker's webcam list, URLs possibly relative."""
         try:
             result = self._request("GET", "/server/webcams/list")
         except _ConnectError:
-            return None
-        for cam in result.get("webcams", []) if isinstance(result, dict) else []:
-            if cam.get("enabled") is False:
-                continue
-            return {
-                "stream_url": self._absolute(cam.get("stream_url")),
-                "snapshot_url": self._absolute(cam.get("snapshot_url")),
-            }
-        return None
+            return []
+        cams = result.get("webcams", []) if isinstance(result, dict) else []
+        return [(c.get("stream_url"), c.get("snapshot_url")) for c in cams if c.get("enabled") is not False]
 
-    def _absolute(self, url: str | None) -> str | None:
-        if not url:
-            return None
-        if url.startswith(("http://", "https://", "rtsp://")):
-            return url
-        # Creality serves relative paths such as "/webcam/?action=stream" on the
-        # web-UI port (80), not on the Moonraker API port.
-        return f"http://{self.ip_address}{url if url.startswith('/') else '/' + url}"
+    def _camera_candidates(self, current: tuple[str | None, str | None] | None) -> list[tuple[str, str | None]]:
+        """Stream/snapshot URL pairs to try, best first, without duplicates."""
+        host = self.ip_address
+        pairs: list[tuple[str | None, str | None]] = []
+        if current and current[0]:
+            pairs.append(current)
+        for stream, snapshot in self._advertised_webcams():
+            for stream_path, snapshot_path in ((stream, snapshot),):
+                for base in self._camera_bases(stream_path):
+                    pairs.append((base(stream_path), base(snapshot_path) if snapshot_path else None))
+        # Common places a Creality / Klipper printer serves its camera
+        # (mjpg-streamer on 8080, or nginx in front of Fluidd / Mainsail).
+        for prefix in (":8080/", "/webcam/", ":4408/webcam/", ":8080/webcam/"):
+            pairs.append((f"http://{host}{prefix}?action=stream", f"http://{host}{prefix}?action=snapshot"))
+        seen: set[str] = set()
+        out: list[tuple[str, str | None]] = []
+        for stream, snapshot in pairs:
+            if stream and stream not in seen:
+                seen.add(stream)
+                out.append((stream, snapshot))
+        return out
+
+    def _camera_bases(self, url: str | None):
+        """Absolute URL(s) for an advertised path: as given, or on each web-UI port."""
+        host = self.ip_address
+        if not url or url.startswith(("http://", "https://", "rtsp://")):
+            return [lambda u: u]
+        return [
+            (lambda u, port=port: f"http://{host}{port}{u if u.startswith('/') else '/' + u}")
+            for port in ("", ":4408", ":8080")
+        ]
+
+    def _responds_with_image(self, url: str, timeout: float = 3.0) -> bool:
+        """True if *url* answers 200 with an image or an MJPEG stream (headers only)."""
+        http = self._probe_http
+        if http is None:
+            http = self._probe_http = httpx.Client(timeout=timeout, follow_redirects=True)
+        try:
+            with http.stream("GET", url) as response:
+                ctype = response.headers.get("content-type", "").lower()
+                return response.status_code == 200 and (
+                    ctype.startswith("image/") or "multipart/x-mixed-replace" in ctype
+                )
+        except httpx.HTTPError:
+            return False
+
+    def find_camera(self, current_stream: str | None = None, current_snapshot: str | None = None) -> dict:
+        """Find a working camera URL.
+
+        Tries the one already configured, then what Moonraker advertises, then the
+        usual Creality locations, and returns the first that really serves an image:
+        ``{"stream_url", "snapshot_url", "verified": True, "tried": [...]}``. When
+        nothing answers, returns the advertised pair unverified (``verified``
+        False), or ``None`` URLs if Moonraker advertises none.
+        """
+        tried: list[str] = []
+        candidates = self._camera_candidates((current_stream, current_snapshot) if current_stream else None)
+        for stream, snapshot in candidates:
+            probe = snapshot or stream
+            tried.append(probe)
+            if self._responds_with_image(probe):
+                return {"stream_url": stream, "snapshot_url": snapshot, "verified": True, "tried": tried}
+        advertised = self._advertised_webcams()
+        if advertised:
+            stream, snapshot = advertised[0]
+            return {
+                "stream_url": next(iter(b(stream) for b in self._camera_bases(stream)), None),
+                "snapshot_url": next(iter(b(snapshot) for b in self._camera_bases(snapshot)), None)
+                if snapshot
+                else None,
+                "verified": False,
+                "tried": tried,
+            }
+        return {"stream_url": None, "snapshot_url": None, "verified": False, "tried": tried}
+
+    def get_webcam_urls(self) -> dict | None:
+        """The camera for a new printer: a verified one, else Moonraker's advertised pair, else None."""
+        found = self.find_camera()
+        return found if found["stream_url"] else None
 
     # ------------------------------------------------------------------ debug log
 
