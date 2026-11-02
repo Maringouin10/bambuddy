@@ -1061,6 +1061,9 @@ class PrinterState:
     # Moonraker): they have no FTPS service, so the archive code must not run
     # its sliced-file sweep against them. Bambu printers keep the default.
     ftp_capable: bool = True
+    # A human-readable fault the printer itself reports (Klipper: print_stats.message, a halted MCU,
+    # a filament runout pause). None when healthy. Bambu printers report faults as HMS codes instead.
+    printer_error: str | None = None
 
 
 # Stage name mapping from BambuStudio DeviceManager.cpp

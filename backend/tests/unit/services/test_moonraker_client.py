@@ -1079,3 +1079,81 @@ def test_the_bambu_ams_controls_say_no_instead_of_crashing():
     assert client.ams_set_filament_setting(0, 0, "PLA", "FFFFFF") is False
     assert client.extrusion_cali_sel(0, 0, 0, 0) is False
     assert client.register_assignment_verification(0, 0, {}) is None
+
+
+# ---------------------------------------------------------------- printer errors
+
+
+def test_a_healthy_printer_reports_no_error():
+    client = make_client(FakeMoonraker())
+    tick(client)
+    assert client.state.printer_error is None
+
+
+def test_a_failed_job_surfaces_klipper_s_own_message_and_reaches_the_completion_payload():
+    fake = FakeMoonraker()
+    completes = []
+    client = make_client(fake, on_print_complete=completes.append)
+    tick(client)
+    fake.set_print("printing", progress=0.4, duration=600.0)
+    tick(client)
+    fake.set_print("error", progress=0.4, duration=600.0)
+    fake.status["print_stats"]["message"] = "Heater extruder not heating at expected rate\nSee docs"
+    tick(client)
+
+    assert client.state.printer_error == "Heater extruder not heating at expected rate"
+    assert completes[0]["status"] == "failed"
+    assert completes[0]["printer_error"] == "Heater extruder not heating at expected rate"
+
+
+def test_a_halted_klipper_reports_its_shutdown_message():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    tick(client)
+    fake.status["webhooks"] = {"state": "shutdown", "state_message": "Lost communication with MCU 'mcu'"}
+    tick(client)
+    assert client.state.printer_error == "Lost communication with MCU 'mcu'"
+
+
+def test_a_paused_print_with_no_filament_at_the_sensor_is_a_runout():
+    fake = FakeMoonraker()
+    fake.objects = [*OBJECTS, "filament_switch_sensor runout"]
+    fake.status["filament_switch_sensor runout"] = {"enabled": True, "filament_detected": True}
+    client = make_client(fake)
+    tick(client)
+    fake.set_print("printing", progress=0.3, duration=300.0)
+    tick(client)
+    assert client.state.printer_error is None
+
+    fake.set_print("paused", progress=0.3, duration=300.0)
+    fake.status["filament_switch_sensor runout"]["filament_detected"] = False
+    tick(client)
+    assert client.state.printer_error == "Filament runout (runout)"
+
+    # a pause the user asked for, with filament present, is not an error
+    fake.status["filament_switch_sensor runout"]["filament_detected"] = True
+    tick(client)
+    assert client.state.printer_error is None
+
+
+def test_a_disabled_runout_sensor_is_ignored():
+    fake = FakeMoonraker()
+    fake.objects = [*OBJECTS, "filament_switch_sensor runout"]
+    fake.status["filament_switch_sensor runout"] = {"enabled": False, "filament_detected": False}
+    client = make_client(fake)
+    tick(client)
+    fake.set_print("paused", progress=0.3, duration=300.0)
+    tick(client)
+    assert client.state.printer_error is None
+
+
+def test_a_cleared_error_goes_away_when_the_printer_recovers():
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    tick(client)
+    fake.status["webhooks"] = {"state": "shutdown", "state_message": "MCU shutdown"}
+    tick(client)
+    assert client.state.printer_error
+    fake.status["webhooks"] = {"state": "ready"}
+    tick(client)
+    assert client.state.printer_error is None

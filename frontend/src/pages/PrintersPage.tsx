@@ -4055,6 +4055,16 @@ function PrinterCard({
                   {wifiSignal}dBm
                 </span>
               )}
+              {/* A Klipper printer's own fault message (shutdown, failed job, filament runout), full width so it reads */}
+              {isCrealityCard && status?.connected && status.printer_error && (
+                <div
+                  role="alert"
+                  className="w-full flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-xs bg-status-error/15 text-status-error"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
+                  <span className="break-words min-w-0">{status.printer_error}</span>
+                </div>
+              )}
               {/* HMS Status Indicator (Bambu only: Klipper printers have no HMS) */}
               {status?.connected && !isCrealityCard && (() => {
                 const knownErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];

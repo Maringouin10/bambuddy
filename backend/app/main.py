@@ -7310,7 +7310,9 @@ async def on_print_complete(printer_id: int, data: dict):
                 item.status = queue_status
                 item.completed_at = datetime.now(timezone.utc)
                 if queue_status == "failed" and not item.error_message:
-                    item.error_message = _format_hms_error_summary(data.get("hms_errors") or [])
+                    item.error_message = data.get("printer_error") or _format_hms_error_summary(
+                        data.get("hms_errors") or []
+                    )
 
                 # Bump usage counters on the source library file so admins can
                 # sort by "last printed" and (eventually) auto-purge stale
@@ -8285,7 +8287,10 @@ async def on_print_complete(printer_id: int, data: dict):
                             "print_time_seconds": archive.print_time_seconds,
                             "actual_time_seconds": actual_time_seconds,
                             "actual_filament_grams": archive.filament_used_grams,
-                            "failure_reason": archive.failure_reason,
+                            # A Klipper printer's own words for what went wrong beat the archive's
+                            # (usually empty) reason key for a failed print.
+                            "failure_reason": (data.get("printer_error") if print_status == "failed" else None)
+                            or archive.failure_reason,
                             "created_by_id": archive.created_by_id,
                         }
 

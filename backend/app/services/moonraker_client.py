@@ -375,6 +375,7 @@ class MoonrakerClient:
         self._light_pin: str | None = None
         self._fans: dict[str, FanRef] = {}
         self._has_box = False
+        self._filament_sensors: list[str] = []
         self._unknown_cfs_logged: set[str] = set()
         self._state_before_power_off: str | None = None
 
@@ -488,6 +489,13 @@ class MoonrakerClient:
         self._chamber_heater = heater.split(" ", 1)[1] if heater else None
         if self._chamber_object:
             objects.append(self._chamber_object)
+        # Filament runout / motion sensors: a pause with no filament in front of one is a runout.
+        self._filament_sensors = [
+            n for n in listed if n.startswith(("filament_switch_sensor ", "filament_motion_sensor "))
+        ]
+        for name in self._filament_sensors:
+            if name not in objects:
+                objects.append(name)
         # CFS (K2 series): the multi-filament module is the Klipper `box` object.
         self._has_box = "box" in listed
         if self._has_box:
@@ -564,6 +572,7 @@ class MoonrakerClient:
         self._apply_cfs(st.get("box"))
         self._apply_progress(new_state, filename, stats, sdcard, display, st)
 
+        self.state.printer_error = self._printer_error(st, new_state, webhooks, stats)
         self.state.state = new_state
         self.state.gcode_file = filename
         self.state.current_print = _slug_name(filename)
@@ -586,6 +595,26 @@ class MoonrakerClient:
 
         self._track_lifecycle(new_state, filename)
         self._emit_state()
+
+    def _printer_error(self, st: dict, new_state: str, webhooks: dict, stats: dict) -> str | None:
+        """The fault the printer is reporting, in its own words, or None when healthy.
+
+        In order of severity: a halted Klipper (MCU lost, thermal runaway ...), the message a failed
+        job carries, and a paused job with a filament sensor that sees no filament (a runout).
+        """
+        if webhooks.get("state") in ("shutdown", "error"):
+            text = str(webhooks.get("state_message") or "Klipper has shut down").strip()
+            return text.splitlines()[0][:300] if text else "Klipper has shut down"
+        if new_state == "FAILED":
+            message = str(stats.get("message") or "").strip()
+            if message:
+                return message.splitlines()[0][:300]
+        if new_state == "PAUSE":
+            for name in self._filament_sensors:
+                sensor = st.get(name) or {}
+                if sensor.get("enabled", True) and sensor.get("filament_detected") is False:
+                    return f"Filament runout ({name.split(' ', 1)[1]})"
+        return None
 
     def _apply_temperatures(self, st: dict) -> None:
         temps = self.state.temperatures
@@ -784,6 +813,7 @@ class MoonrakerClient:
                         "raw_data": dict(self.state.raw_data),
                         "timelapse_was_active": False,
                         "hms_errors": [],
+                        "printer_error": self.state.printer_error,
                         "ams_mapping": None,
                         "last_progress": self._last_valid_progress,
                         "last_layer_num": self._last_valid_layer,

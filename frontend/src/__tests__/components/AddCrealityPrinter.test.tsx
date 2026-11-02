@@ -216,6 +216,17 @@ describe('Creality printers', () => {
     await waitFor(() => expect(uploads).toHaveLength(1));
   });
 
+  it("shows the Klipper printer's own error message on its card", async () => {
+    server.use(
+      http.get('/api/v1/printers/', () => HttpResponse.json([crealityPrinter])),
+      http.get('/api/v1/printers/:id/status', () =>
+        HttpResponse.json({ ...status, state: 'FAILED', printer_error: 'Heater extruder not heating at expected rate' }),
+      ),
+    );
+    render(<PrintersPage />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Heater extruder not heating at expected rate');
+  });
+
   it('switching back to Bambu restores the credential fields', async () => {
     await openAddModal();
     await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));

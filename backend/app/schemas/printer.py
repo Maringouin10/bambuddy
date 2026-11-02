@@ -474,6 +474,8 @@ class PrinterStatus(BaseModel):
     # Queue: printer is awaiting the user to acknowledge the build plate is cleared
     # after a finished/failed print. Persisted across restarts (#961).
     awaiting_plate_clear: bool = False
+    # A fault the printer reports in words (Klipper printers); None when healthy.
+    printer_error: str | None = None
     # AMS drying support
     supports_drying: bool = False
     # AMS "Print While Drying" — drying mid-print. Verified per Bambu wiki release notes;

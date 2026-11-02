@@ -331,3 +331,26 @@ class TestCrealityCfsInStatus:
             30,
         )
         assert unit["tray"][2]["exists"] is False
+
+
+class TestPrinterErrorInStatus:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_the_printers_own_error_reaches_the_status_response(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 Plus")
+        state = PrinterState(connected=True, state="FAILED", ftp_capable=False)
+        state.printer_error = "Heater extruder not heating at expected rate"
+
+        with patch("backend.app.services.printer_manager.printer_manager.get_status", return_value=state):
+            body = (await async_client.get(f"/api/v1/printers/{printer.id}/status")).json()
+
+        assert body["printer_error"] == "Heater extruder not heating at expected rate"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_a_healthy_printer_has_no_error(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P1S", model="P1S")
+        state = PrinterState(connected=True, state="IDLE")
+        with patch("backend.app.services.printer_manager.printer_manager.get_status", return_value=state):
+            body = (await async_client.get(f"/api/v1/printers/{printer.id}/status")).json()
+        assert body["printer_error"] is None
