@@ -8658,8 +8658,30 @@ export interface SubnetScanStatus {
 }
 
 // Discovery API
+export interface CrealityScanStatus {
+  running: boolean;
+  scanned: number;
+  total: number;
+  printers: Array<{
+    ip_address: string;
+    port: number;
+    hostname: string | null;
+    firmware_version: string | null;
+    klipper_state: string | null;
+  }>;
+}
+
 export const discoveryApi = {
   getInfo: () => request<DiscoveryInfo>('/discovery/info'),
+
+  // Creality / Klipper printers: a subnet scan for a Moonraker API
+  startCrealityScan: (subnet: string) =>
+    request<CrealityScanStatus>('/discovery/creality/scan', {
+      method: 'POST',
+      body: JSON.stringify({ subnet, timeout: 1.0 }),
+    }),
+  getCrealityScan: () => request<CrealityScanStatus>('/discovery/creality/scan'),
+  stopCrealityScan: () => request<CrealityScanStatus>('/discovery/creality/scan/stop', { method: 'POST' }),
 
   getStatus: () => request<DiscoveryStatus>('/discovery/status'),
 

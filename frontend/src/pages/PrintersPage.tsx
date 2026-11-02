@@ -163,6 +163,7 @@ import { ConfirmOutcomeDialog } from '../components/ConfirmOutcomeDialog';
 // Aliased: lucide-react already exports a `Link` icon into this module.
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { api, discoveryApi, firmwareApi, withMediaToken, ApiError } from '../api/client';
+import type { CrealityScanStatus } from '../api/client';
 import { formatDateOnly, formatDateTime, formatETA, formatDuration, formatDurationFromHours, parseUTCDate } from '../utils/date';
 import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
 import { Card, CardContent } from '../components/Card';
@@ -7712,6 +7713,10 @@ export function AddPrinterModal({
   // serial number, access code or network discovery, just an IP (+ optional port).
   const isCreality = form.printer_type === 'creality';
   const [moonrakerPort, setMoonrakerPort] = useState('');
+  // Network scan for Creality printers (a Moonraker API answering on its port)
+  const [crealitySubnet, setCrealitySubnet] = useState('');
+  const [crealityScan, setCrealityScan] = useState<CrealityScanStatus | null>(null);
+  const [crealityScanError, setCrealityScanError] = useState('');
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -7760,6 +7765,33 @@ export function AddPrinterModal({
 
   // Filter out already-added printers
   const newPrinters = discovered.filter(p => !existingSerials.includes(p.serial));
+
+  // Pre-fill the Creality scan with the first subnet Bambuddy sits on.
+  useEffect(() => {
+    if (!crealitySubnet && detectedSubnets.length > 0) setCrealitySubnet(detectedSubnets[0]);
+  }, [detectedSubnets, crealitySubnet]);
+
+  // Follow a running Creality scan until it ends.
+  useEffect(() => {
+    if (!crealityScan?.running) return;
+    const timer = setInterval(async () => {
+      try {
+        setCrealityScan(await discoveryApi.getCrealityScan());
+      } catch {
+        // a failed poll just tries again on the next tick
+      }
+    }, 700);
+    return () => clearInterval(timer);
+  }, [crealityScan?.running]);
+
+  const startCrealityScan = async () => {
+    setCrealityScanError('');
+    try {
+      setCrealityScan(await discoveryApi.startCrealityScan(crealitySubnet.trim()));
+    } catch (e) {
+      setCrealityScanError(e instanceof Error ? e.message : t('printers.discovery.failedToStart'));
+    }
+  };
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -7946,6 +7978,72 @@ export function AddPrinterModal({
               <p className="text-xs text-bambu-gray mt-2">{t('printers.modal.crealityHint')}</p>
             )}
           </div>
+
+          {/* Creality printers have no SSDP announcement: find them by asking each address for a Moonraker API. */}
+          {isCreality && (
+            <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
+              <label className="block text-sm text-bambu-gray mb-1" htmlFor="creality-subnet">
+                {t('printers.discovery.subnetToScan')}
+              </label>
+              <input
+                id="creality-subnet"
+                type="text"
+                className="w-full px-3 py-2 mb-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                value={crealitySubnet}
+                onChange={(e) => setCrealitySubnet(e.target.value)}
+                placeholder="192.168.1.0/24"
+                disabled={!!crealityScan?.running}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                onClick={startCrealityScan}
+                disabled={!!crealityScan?.running || !crealitySubnet.trim()}
+              >
+                {crealityScan?.running ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {t('printers.discovery.scanProgress', { scanned: crealityScan.scanned, total: crealityScan.total })}
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4" />
+                    {t('printers.discovery.scanSubnet')}
+                  </>
+                )}
+              </Button>
+              {crealityScanError && <div className="mt-2 text-sm text-red-700 dark:text-red-400">{crealityScanError}</div>}
+              {crealityScan && crealityScan.printers.length > 0 && (
+                <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
+                  {crealityScan.printers.map((found) => (
+                    <button
+                      type="button"
+                      key={found.ip_address}
+                      className="w-full flex items-center justify-between p-2 bg-bambu-dark rounded-lg hover:bg-bambu-dark-secondary text-left transition-colors"
+                      onClick={() => {
+                        setForm({ ...form, name: form.name || found.hostname || '', ip_address: found.ip_address });
+                        setMoonrakerPort(found.port !== 7125 ? String(found.port) : '');
+                        setCrealityScan(null);
+                      }}
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-white truncate">{found.hostname || found.ip_address}</span>
+                        <span className="block text-xs text-bambu-gray truncate">
+                          {found.ip_address}
+                          {found.firmware_version ? ` • ${found.firmware_version}` : ''}
+                        </span>
+                      </span>
+                      <ChevronDown className="w-4 h-4 text-bambu-gray -rotate-90 flex-shrink-0 ml-2" />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {crealityScan && !crealityScan.running && crealityScan.printers.length === 0 && (
+                <p className="mt-2 text-sm text-bambu-gray text-center">{t('printers.discovery.noPrintersFoundSubnet')}</p>
+              )}
+            </div>
+          )}
 
           {/* Discovery Section (Bambu only: SSDP / subnet scan find Bambu printers) */}
           {!isCreality && (

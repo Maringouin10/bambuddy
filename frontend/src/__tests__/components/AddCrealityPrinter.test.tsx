@@ -227,6 +227,56 @@ describe('Creality printers', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Heater extruder not heating at expected rate');
   });
 
+  it('scans the network for Creality printers and fills the form from the one picked', async () => {
+    let scanned: string | null = null;
+    server.use(
+      http.get('/api/v1/discovery/info', () =>
+        HttpResponse.json({ is_docker: false, ssdp_running: false, scan_running: false, subnets: ['192.168.1.0/24'] }),
+      ),
+      http.post('/api/v1/discovery/creality/scan', async ({ request }) => {
+        scanned = ((await request.json()) as { subnet: string }).subnet;
+        return HttpResponse.json({
+          running: false,
+          scanned: 254,
+          total: 254,
+          printers: [
+            { ip_address: '192.168.1.77', port: 4408, hostname: 'k2plus', firmware_version: 'v0.11.0', klipper_state: 'ready' },
+          ],
+        });
+      }),
+    );
+    await openAddModal();
+    await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));
+
+    // the subnet Bambuddy sits on is pre-filled
+    await waitFor(() => expect(screen.getByLabelText(/subnet to scan/i)).toHaveValue('192.168.1.0/24'));
+    await userEvent.click(screen.getByRole('button', { name: /scan subnet for printers/i }));
+    await waitFor(() => expect(scanned).toBe('192.168.1.0/24'));
+
+    await userEvent.click(await screen.findByRole('button', { name: /k2plus/i }));
+
+    expect(screen.getByPlaceholderText(/192\.168\.1\.100/)).toHaveValue('192.168.1.77');
+    expect(screen.getByPlaceholderText(/my printer/i)).toHaveValue('k2plus');
+    expect(screen.getByPlaceholderText('7125')).toHaveValue(4408); // not the default port: kept
+  });
+
+  it('reports a scan that finds nothing', async () => {
+    server.use(
+      http.get('/api/v1/discovery/info', () =>
+        HttpResponse.json({ is_docker: false, ssdp_running: false, scan_running: false, subnets: ['10.0.0.0/24'] }),
+      ),
+      http.post('/api/v1/discovery/creality/scan', () =>
+        HttpResponse.json({ running: false, scanned: 254, total: 254, printers: [] }),
+      ),
+    );
+    await openAddModal();
+    await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));
+    await waitFor(() => expect(screen.getByLabelText(/subnet to scan/i)).toHaveValue('10.0.0.0/24'));
+    await userEvent.click(screen.getByRole('button', { name: /scan subnet for printers/i }));
+
+    expect(await screen.findByText(/no printers found in the specified subnet/i)).toBeInTheDocument();
+  });
+
   it('switching back to Bambu restores the credential fields', async () => {
     await openAddModal();
     await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));

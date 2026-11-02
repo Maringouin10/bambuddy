@@ -5,6 +5,7 @@ Provides endpoints for discovering Bambu Lab printers on the local network.
 Supports both SSDP discovery (for native installs) and subnet scanning (for Docker).
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter
@@ -14,6 +15,7 @@ from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.permissions import Permission
 from backend.app.core.tasks import spawn_background_task
 from backend.app.models.user import User
+from backend.app.services.creality_discovery import creality_scanner
 from backend.app.services.discovery import (
     discovery_service,
     is_running_in_docker,
@@ -53,6 +55,15 @@ class SubnetScanStatus(BaseModel):
     running: bool
     scanned: int
     total: int
+
+
+class CrealityScanStatus(BaseModel):
+    """Progress and results of a scan for Creality / Klipper printers."""
+
+    running: bool
+    scanned: int
+    total: int
+    printers: list[dict] = []
 
 
 class DiscoveredPrinterResponse(BaseModel):
@@ -194,3 +205,41 @@ async def stop_subnet_scan(
         scanned=scanned,
         total=total,
     )
+
+
+def _creality_status() -> CrealityScanStatus:
+    scanned, total = creality_scanner.progress
+    return CrealityScanStatus(
+        running=creality_scanner.is_running, scanned=scanned, total=total, printers=creality_scanner.found
+    )
+
+
+@router.post("/creality/scan", response_model=CrealityScanStatus)
+async def start_creality_scan(
+    request: SubnetScanRequest,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
+):
+    """Scan a subnet for Creality / Klipper printers (a Moonraker API answering on port 7125)."""
+    spawn_background_task(
+        creality_scanner.scan(request.subnet, request.timeout),
+        name=f"creality-scan-{request.subnet}",
+    )
+    # the scan flips `running` as soon as it starts; report that rather than the not-yet-started state
+    await asyncio.sleep(0)
+    return _creality_status()
+
+
+@router.get("/creality/scan", response_model=CrealityScanStatus)
+async def get_creality_scan(
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
+):
+    """Progress and the printers found so far."""
+    return _creality_status()
+
+
+@router.post("/creality/scan/stop", response_model=CrealityScanStatus)
+async def stop_creality_scan(
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.DISCOVERY_SCAN),
+):
+    creality_scanner.stop()
+    return _creality_status()

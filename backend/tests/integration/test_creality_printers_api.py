@@ -491,3 +491,35 @@ class TestMoonrakerFileBrowserAPI:
             assert (
                 await async_client.delete(f"/api/v1/printers/{printer.id}/moonraker/files", params={"path": "a.gcode"})
             ).status_code == 500
+
+
+class TestCrealityDiscoveryAPI:
+    SCANNER = "backend.app.api.routes.discovery.creality_scanner"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_a_scan_can_be_started_and_its_results_read(self, async_client: AsyncClient):
+        from backend.app.services.creality_discovery import FoundCrealityPrinter
+
+        printer = FoundCrealityPrinter("192.168.1.50", 7125, "ender3v3", "v1", "ready")
+        with (
+            patch(f"{self.SCANNER}.scan", new=AsyncMock()) as scan,
+            patch(f"{self.SCANNER}._found", new={"192.168.1.50": printer}),
+            patch(f"{self.SCANNER}._scanned", new=256),
+            patch(f"{self.SCANNER}._total", new=256),
+        ):
+            started = await async_client.post("/api/v1/discovery/creality/scan", json={"subnet": "192.168.1.0/24"})
+            status = (await async_client.get("/api/v1/discovery/creality/scan")).json()
+
+        assert started.status_code == 200
+        scan.assert_called_once_with("192.168.1.0/24", 1.0)
+        assert status["printers"][0]["hostname"] == "ender3v3"
+        assert (status["scanned"], status["total"]) == (256, 256)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_a_scan_can_be_stopped(self, async_client: AsyncClient):
+        with patch(f"{self.SCANNER}.stop") as stop:
+            response = await async_client.post("/api/v1/discovery/creality/scan/stop")
+        assert response.status_code == 200
+        stop.assert_called_once()
