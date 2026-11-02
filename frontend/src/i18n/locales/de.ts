@@ -900,6 +900,7 @@ export default {
     },
     developerModeWarning: 'Der Entwickler-LAN-Modus ist nicht aktiviert auf: {{names}}. Einige Funktionen funktionieren möglicherweise nicht.',
     howToEnable: 'Aktivieren',
+    crealityGcodeOnly: 'Creality-Drucker drucken reine .gcode-Dateien. Slicen Sie das Modell mit Creality Print und verwenden Sie die .gcode-Datei.',
     incompatibleFile: 'Diese Datei wurde für {{slicedFor}} geslicet, aber dieser Drucker ist ein {{printerModel}}',
     dropNotPrintable: 'Nur .gcode- und .gcode.3mf-Dateien können gedruckt werden',
     dropToPrint: 'Zum Drucken ablegen',

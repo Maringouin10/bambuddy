@@ -178,6 +178,15 @@ describe('Creality printers', () => {
     expect(diagnosticCalls).toBe(0);
   });
 
+  it('a Creality card keeps the Print button but not the Bambu-only HMS badge or FTP file browser', async () => {
+    server.use(http.get('/api/v1/printers/', () => HttpResponse.json([crealityPrinter])));
+    render(<PrintersPage />);
+    await waitFor(() => expect(screen.getByText('Ender 3 V3 KE')).toBeInTheDocument());
+
+    expect(await screen.findByRole('button', { name: /^print$/i })).toBeInTheDocument();
+    expect(screen.queryByTitle(/hms/i)).not.toBeInTheDocument();
+  });
+
   it('switching back to Bambu restores the credential fields', async () => {
     await openAddModal();
     await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));

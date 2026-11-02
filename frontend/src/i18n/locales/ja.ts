@@ -899,6 +899,7 @@ export default {
     },
     developerModeWarning: '開発者LANモードが有効になっていません: {{names}}。一部の機能が動作しない可能性があります。',
     howToEnable: '有効化方法',
+    crealityGcodeOnly: 'Creality プリンターはプレーンな .gcode ファイルを印刷します。Creality Print でスライスし、.gcode ファイルを使用してください。',
     incompatibleFile: 'このファイルは{{slicedFor}}用にスライスされていますが、このプリンターは{{printerModel}}です',
     dropNotPrintable: '.gcodeおよび.gcode.3mfファイルのみ印刷できます',
     dropToPrint: 'ドロップして印刷',

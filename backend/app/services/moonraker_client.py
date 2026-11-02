@@ -217,6 +217,7 @@ class MoonrakerClient:
         self.state = PrinterState(ftp_capable=False)
         self.state.raw_data = {"printer_type": PRINTER_TYPE_CREALITY}
         self.last_connect_error: str | None = None
+        self.last_error: str | None = None  # why the last upload_and_print failed
         self.last_dispatch_subtask_id: str | None = None  # parity with BambuMQTTClient
         self._drying_targets: dict[int, dict] = {}  # parity: PrinterManager reads it
         self._last_message_time: float = 0.0
@@ -719,23 +720,52 @@ class MoonrakerClient:
         return self._post(f"/printer/print/start?filename={quote(filename, safe='/')}")
 
     def upload_and_print(self, local_path: str, remote_name: str | None = None, start: bool = True) -> bool:
-        """Upload a sliced ``.gcode`` to the printer and optionally start it."""
-        if not self.state.connected:
+        """Upload a sliced ``.gcode`` to the printer's ``gcodes`` root and optionally start it.
+
+        Moonraker answers an upload with ``{"item": {...}, "print_started": bool, ...}``
+        (not the ``{"result": ...}`` envelope its other endpoints use). On failure
+        ``last_error`` says why, in words fit for a queue item's error message.
+        """
+        self.last_error = None
+        if not self.state.connected or self._http is None:
+            self.last_error = "Printer not connected"
             return False
         name = remote_name or os.path.basename(local_path)
         try:
             with open(local_path, "rb") as fh:
-                self._request(
-                    "POST",
-                    "/server/files/upload",
+                response = self._http.post(
+                    f"{self._base_url}/server/files/upload",
                     data={"root": "gcodes", "print": "true" if start else "false"},
                     files={"file": (name, fh, "application/octet-stream")},
                     timeout=300.0,
                 )
-            return True
-        except (_ConnectError, OSError) as exc:
-            logger.warning("[%s] Upload of %s failed: %s", self.ip_address, name, exc)
-            return False
+        except OSError as exc:
+            self.last_error = f"Could not read the file to send: {exc}"
+        except httpx.HTTPError as exc:
+            self.last_error = f"Could not reach the printer to send the file: {exc or type(exc).__name__}"
+        else:
+            if response.status_code not in (200, 201):
+                detail = ""
+                try:
+                    detail = (response.json().get("error") or {}).get("message", "")
+                except (ValueError, AttributeError):
+                    pass
+                self.last_error = (
+                    f"The printer refused the file (HTTP {response.status_code}{': ' + detail if detail else ''})"
+                )
+            else:
+                try:
+                    started = bool(response.json().get("print_started"))
+                except (ValueError, AttributeError):
+                    started = False
+                if start and not started:
+                    self.last_error = (
+                        "The file reached the printer but it did not start printing (is it busy or not ready?)"
+                    )
+                else:
+                    return True
+        logger.warning("[%s] Upload of %s failed: %s", self.ip_address, name, self.last_error)
+        return False
 
     def list_gcode_files(self) -> list[dict]:
         """Files in the printer's ``gcodes`` root: ``[{path, modified, size}]``."""

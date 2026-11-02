@@ -900,6 +900,7 @@ export default {
     },
     developerModeWarning: '以下打印机未启用开发者局域网模式：{{names}}。某些功能可能无法使用。',
     howToEnable: '如何启用',
+    crealityGcodeOnly: 'Creality 打印机打印普通 .gcode 文件。请用 Creality Print 切片后使用 .gcode 文件。',
     incompatibleFile: '此文件是为 {{slicedFor}} 切片的，但该打印机是 {{printerModel}}',
     dropNotPrintable: '只能打印 .gcode 和 .gcode.3mf 文件',
     dropToPrint: '拖放以打印',

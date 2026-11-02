@@ -900,6 +900,7 @@ export default {
     },
     developerModeWarning: 'Le mode développeur LAN n\'est pas activé sur : {{names}}. Certaines fonctionnalités peuvent ne pas fonctionner.',
     howToEnable: 'Comment activer',
+    crealityGcodeOnly: 'Les imprimantes Creality impriment des fichiers .gcode simples. Tranchez le modèle avec Creality Print et utilisez le fichier .gcode.',
     incompatibleFile: 'Ce fichier a été tranché pour {{slicedFor}}, mais cette imprimante est une {{printerModel}}',
     dropNotPrintable: 'Seuls les fichiers .gcode et .gcode.3mf peuvent être imprimés',
     dropToPrint: 'Déposer pour imprimer',

@@ -196,7 +196,7 @@ import { PrintModal } from '../components/PrintModal';
 import { PrinterInfoModal } from '../components/PrinterInfoModal';
 import { FeedDirectionModal } from '../components/FeedDirectionModal';
 import { getAmsLabel, getEmptySlotKind, getGlobalTrayId, getFillBarColor, getSpoolmanFillLevel, getFallbackSpoolTag, installedNozzleDiameters, isBambuLabSpool, resolveSlotNozzleDiameter, resolveSlotExtruder, formatSlotLabel, slotPresetDescribesTray, FTS_INLET_SIDE } from '../utils/amsHelpers';
-import { MAX_CHAMBER_TEMP_C, getPrinterImage, getWifiStrength, filterCompatibleQueueItems, isPrinterCurrentlyDispatchable } from '../utils/printer';
+import { MAX_CHAMBER_TEMP_C, getPrinterImage, getWifiStrength, filterCompatibleQueueItems, isModelMatchForPrinter, isPrinterCurrentlyDispatchable } from '../utils/printer';
 import { FilamentSlotCircle } from '../components/FilamentSlotCircle';
 import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
@@ -3507,10 +3507,9 @@ function PrinterCard({
   // used to check — so someone holding that but neither of these had the file
   // uploaded and then rejected by the queue, leaving it stranded. The Print
   // button below has always checked this pair.
-  // Creality (Moonraker) printers cannot be fed a sliced file from Bambuddy yet, so the
-  // card is not a drop target: no overlay, and the browser's drop is simply swallowed.
+  // Creality (Moonraker) printers take plain .gcode only; Bambu printers also take .gcode.3mf.
   const isCrealityCard = printer.printer_type === 'creality';
-  const canDrop = !isCrealityCard && hasPermission('library:upload') && hasPermission('queue:create');
+  const canDrop = hasPermission('library:upload') && hasPermission('queue:create');
 
   // Drives the wording alone. Shared with the PrintModal so the card's promise
   // and the modal's own "will start later" toast cannot disagree.
@@ -3518,7 +3517,6 @@ function PrinterCard({
 
   const handleCardDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
-    if (isCrealityCard) return;
     dragCounterRef.current++;
     if (dragCounterRef.current === 1) setIsDraggingFile(true);
   };
@@ -3530,7 +3528,6 @@ function PrinterCard({
 
   const handleCardDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
-    if (isCrealityCard) return;
     dragCounterRef.current--;
     if (dragCounterRef.current === 0) setIsDraggingFile(false);
   };
@@ -3548,7 +3545,12 @@ function PrinterCard({
 
     // Only accept sliced/printable files (.gcode, .gcode.3mf, etc.)
     const lower = file.name.toLowerCase();
-    if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
+    if (isCrealityCard) {
+      if (!lower.endsWith('.gcode')) {
+        showToast(t('printers.crealityGcodeOnly'), 'error');
+        return;
+      }
+    } else if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
       showToast(t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed'), 'error');
       return;
     }
@@ -3560,7 +3562,7 @@ function PrinterCard({
       // Check printer compatibility if sliced_for_model is available in metadata
       const slicedFor = (result.metadata as Record<string, unknown>)?.sliced_for_model as string | undefined;
       const printerModel = mapModelCode(printer.model);
-      if (slicedFor && printerModel && slicedFor.toLowerCase() !== printerModel.toLowerCase()) {
+      if (slicedFor && printerModel && !isModelMatchForPrinter(slicedFor, printerModel)) {
         await api.deleteLibraryFile(result.id).catch(() => {});
         showToast(
           t('printers.incompatibleFile', 'This file was sliced for {{slicedFor}}, but this printer is a {{printerModel}}', { slicedFor, printerModel }),
@@ -6735,7 +6737,6 @@ function PrinterCard({
                     reason to refuse -- it only means the item waits. Hiding it
                     while the drop zone accepted the same file would have left
                     the two routes into this flow disagreeing. */}
-                {!isCrealityCard && (
                 <Button
                   size="sm"
                   onClick={() => setShowUploadForPrint(true)}
@@ -6752,7 +6753,6 @@ function PrinterCard({
                   <PrinterIcon className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
                   {t('common.print')}
                 </Button>
-                )}
               </div>
             </div>
         </div>
@@ -6788,7 +6788,9 @@ function PrinterCard({
           accept=".gcode,.3mf"
           validateFile={(file) => {
             const lower = file.name.toLowerCase();
-            if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
+            if (isCrealityCard) {
+              if (!lower.endsWith('.gcode')) return t('printers.crealityGcodeOnly');
+            } else if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
               return t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed');
             }
           }}
@@ -6796,7 +6798,7 @@ function PrinterCard({
             // Check printer compatibility if sliced_for_model is available in metadata
             const slicedFor = (uploadedFile.metadata as Record<string, unknown>)?.sliced_for_model as string | undefined;
             const printerModel = mapModelCode(printer.model);
-            if (slicedFor && printerModel && slicedFor.toLowerCase() !== printerModel.toLowerCase()) {
+            if (slicedFor && printerModel && !isModelMatchForPrinter(slicedFor, printerModel)) {
               api.deleteLibraryFile(uploadedFile.id).catch(() => {});
               return t('printers.incompatibleFile', 'This file was sliced for {{slicedFor}}, but this printer is a {{printerModel}}', { slicedFor, printerModel });
             }

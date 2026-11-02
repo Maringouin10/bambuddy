@@ -39,6 +39,14 @@ const GCODE_COMPAT_FAMILIES: ReadonlyArray<ReadonlySet<string>> = [
   new Set(['X1', 'X1C', 'X1E', 'P1P', 'P1S']),
 ];
 
+/** True for Creality machine names ("Ender-3 V3 KE", "Creality K2 Plus", "K2 Pro" ...).
+ *  Mirrors backend is_creality_model in printer_models.py — keep the two in sync. */
+export function isCrealityModel(model: string | null | undefined): boolean {
+  if (!model) return false;
+  const n = model.trim().toUpperCase().replace(/[\s_-]/g, '');
+  return n.startsWith('CREALITY') || n.startsWith('ENDER') || /^K[12]/.test(n);
+}
+
 /** True when G-code sliced for one model may be dispatched to the other.
  *  Unknown/missing metadata on either side returns true (can't validate). */
 export function isGcodeCompatible(
@@ -50,6 +58,9 @@ export function isGcodeCompatible(
   const a = norm(slicedForModel);
   const b = norm(targetModel);
   if (a === b) return true;
+  // Creality slicer profiles are per machine and people slice with a neighbouring one,
+  // so any Creality G-code is accepted on any Creality printer (Bambu files never are).
+  if (isCrealityModel(slicedForModel) && isCrealityModel(targetModel)) return true;
   return GCODE_COMPAT_FAMILIES.some((family) => family.has(a) && family.has(b));
 }
 
@@ -153,4 +164,16 @@ export function filterCompatibleQueueItems(
 
     return true;
   });
+}
+
+/** The model check the Print dialogs apply to one printer: the same model, or two Creality
+ *  machines. Stricter than isGcodeCompatible on purpose — a P1S file is not offered to an X1C
+ *  here, only to the exact model — but Creality-to-Creality is allowed. Missing data passes. */
+export function isModelMatchForPrinter(
+  slicedForModel: string | null | undefined,
+  printerModel: string | null | undefined,
+): boolean {
+  if (!slicedForModel || !printerModel) return true;
+  if (slicedForModel.trim().toLowerCase() === printerModel.trim().toLowerCase()) return true;
+  return isCrealityModel(slicedForModel) && isCrealityModel(printerModel);
 }

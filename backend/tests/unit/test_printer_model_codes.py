@@ -63,3 +63,36 @@ def test_a_p2s_file_can_go_to_a_p2s():
 )
 def test_firmware_line_for_code(model, key):
     assert FirmwareCheckService()._resolve_api_key(model) == key
+
+
+class TestCrealityGcodeCompatibility:
+    """Creality G-code runs on any Creality printer; Bambu and Creality never mix."""
+
+    def test_any_creality_profile_is_accepted_on_any_creality_printer(self):
+        from backend.app.utils.printer_models import is_gcode_compatible
+
+        assert is_gcode_compatible("Creality Ender-3 V3", "Ender-3 V3 Plus")
+        assert is_gcode_compatible("Creality Ender-3 V3 KE", "Ender-3 V3")
+        assert is_gcode_compatible("Creality K2 Plus", "K2 Pro")
+        assert is_gcode_compatible("Ender-3 V3", "Ender-3 V3")
+
+    def test_bambu_and_creality_are_never_compatible(self):
+        from backend.app.utils.printer_models import is_gcode_compatible
+
+        assert not is_gcode_compatible("Creality Ender-3 V3", "P1S")
+        assert not is_gcode_compatible("P1S", "Ender-3 V3 Plus")
+        assert not is_gcode_compatible("X1C", "K2 Plus")
+
+    def test_unknown_metadata_still_passes(self):
+        from backend.app.utils.printer_models import is_gcode_compatible
+
+        assert is_gcode_compatible(None, "Ender-3 V3")
+        assert is_gcode_compatible("Creality Ender-3 V3", None)
+
+    def test_is_creality_model(self):
+        from backend.app.utils.printer_models import is_creality_model
+
+        for model in ("Ender-3 V3 KE", "Creality K2 Plus", "K2 Pro", "k1c", "ENDER-3 V3 PLUS"):
+            assert is_creality_model(model), model
+        for model in ("P1S", "X1C", "A1 Mini", "H2D", "K", None, ""):
+            assert not is_creality_model(model), model

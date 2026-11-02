@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import re
+import shutil
 import zipfile
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -1912,3 +1913,25 @@ def sanitize_project_settings_sentinels(zip_bytes: bytes) -> bytes:
             return dst.getvalue()
     except (zipfile.BadZipFile, OSError):
         return zip_bytes
+
+
+def extract_plate_gcode_from_3mf(file_path: Path, plate_id: int | None, dest: Path) -> bool:
+    """Write the sliced G-code of one plate of a ``.gcode.3mf`` to ``dest``.
+
+    Printers that take plain G-code (Creality / Klipper) cannot read the 3MF container, but a
+    sliced 3MF carries the real G-code as ``Metadata/plate_<n>.gcode``. When the requested plate
+    is not in the file (a plate cut out of a larger project keeps its original number) the first
+    plate that is present is used. Returns False when the file holds no G-code at all, i.e. it
+    was never sliced.
+    """
+    with zipfile.ZipFile(file_path) as zf:
+        names = zf.namelist()
+        member = f"Metadata/plate_{plate_id}.gcode" if plate_id else None
+        if member not in names:
+            plates = sorted(n for n in names if re.fullmatch(r"Metadata/plate_\d+\.gcode", n))
+            member = plates[0] if plates else None
+        if member is None:
+            return False
+        with zf.open(member) as src, open(dest, "wb") as out:
+            shutil.copyfileobj(src, out)
+    return True

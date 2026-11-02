@@ -44,6 +44,8 @@ class FakeMoonraker:
 
     def __init__(self):
         self.objects = list(OBJECTS)
+        self.uploads: list[tuple[str, bytes]] = []
+        self.upload_result = (201, {"item": {"path": "x.gcode", "root": "gcodes"}, "print_started": True})
         self.klipper_state = "ready"
         self.status = {
             "print_stats": {"state": "standby", "filename": "", "print_duration": 0.0, "info": {}},
@@ -73,6 +75,10 @@ class FakeMoonraker:
         path = request.url.path
         if self.status_code != 200:
             return httpx.Response(self.status_code, json={"error": "nope"})
+        if request.method == "POST" and path == "/server/files/upload":
+            self.uploads.append((request.headers.get("content-type", ""), request.content))
+            status, payload = self.upload_result
+            return httpx.Response(status, json=payload)
         if request.method == "POST":
             body = (
                 json.loads(request.content)
@@ -885,3 +891,70 @@ def test_k2_models_are_known_to_have_a_heated_chamber():
         assert supports_chamber_heater(model) is True
     assert supports_chamber_heater("Ender-3 V3 KE") is False
     assert supports_chamber_temp("Ender-3 V3 KE") is False
+
+
+# ---------------------------------------------------------------- upload and print
+
+
+def test_upload_and_print_sends_the_file_to_the_gcodes_root_and_asks_for_it_to_start(tmp_path):
+    fake = FakeMoonraker()
+    client = make_client(fake)
+    tick(client)
+    gcode = tmp_path / "local name.gcode"
+    gcode.write_text("G28\nG1 X10\n")
+
+    assert client.upload_and_print(str(gcode), "benchy.gcode") is True
+
+    content_type, body = fake.uploads[0]
+    assert content_type.startswith("multipart/form-data")
+    assert b'name="root"' in body and b"gcodes" in body
+    assert b'name="print"' in body and b"true" in body
+    assert b'filename="benchy.gcode"' in body and b"G1 X10" in body
+    assert client.last_error is None
+
+
+def test_upload_and_print_can_upload_without_starting(tmp_path):
+    fake = FakeMoonraker()
+    fake.upload_result = (201, {"item": {}, "print_started": False})
+    client = make_client(fake)
+    tick(client)
+    gcode = tmp_path / "a.gcode"
+    gcode.write_text("G28")
+    assert client.upload_and_print(str(gcode), start=False) is True
+    assert b"false" in fake.uploads[0][1]
+
+
+def test_upload_that_does_not_start_is_reported_as_a_failure(tmp_path):
+    fake = FakeMoonraker()
+    fake.upload_result = (201, {"item": {}, "print_started": False})
+    client = make_client(fake)
+    tick(client)
+    gcode = tmp_path / "a.gcode"
+    gcode.write_text("G28")
+
+    assert client.upload_and_print(str(gcode), "a.gcode") is False
+    assert "did not start printing" in client.last_error
+
+
+def test_upload_refused_by_the_printer_carries_its_reason(tmp_path):
+    fake = FakeMoonraker()
+    fake.upload_result = (409, {"error": {"code": 409, "message": "File is loaded, upload not permitted"}})
+    client = make_client(fake)
+    tick(client)
+    gcode = tmp_path / "a.gcode"
+    gcode.write_text("G28")
+
+    assert client.upload_and_print(str(gcode), "a.gcode") is False
+    assert "HTTP 409" in client.last_error and "upload not permitted" in client.last_error
+
+
+def test_upload_when_disconnected_or_file_missing_fails_with_a_reason(tmp_path):
+    client = MoonrakerClient("10.0.0.9", "X")
+    assert client.upload_and_print(str(tmp_path / "a.gcode")) is False
+    assert client.last_error == "Printer not connected"
+
+    fake = FakeMoonraker()
+    connected = make_client(fake)
+    tick(connected)
+    assert connected.upload_and_print(str(tmp_path / "missing.gcode")) is False
+    assert "Could not read the file" in connected.last_error

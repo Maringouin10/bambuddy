@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import shutil
+import tempfile
 import time
 import uuid
 import zipfile
@@ -81,6 +83,7 @@ from backend.app.utils.printer_models import (
 )
 from backend.app.utils.threemf_tools import (
     default_plate_number,
+    extract_plate_gcode_from_3mf,
     extract_rack_plan_from_3mf,
     extract_slot_extruders_from_3mf,
     select_plate_gcode_name,
@@ -7226,6 +7229,196 @@ class PrintScheduler:
         if owner:
             printer_manager.set_current_print_user(item.printer_id, owner.id, owner.username)
 
+    async def _start_print_moonraker(self, db: AsyncSession, item: PrintQueueItem, printer: Printer) -> None:
+        """Send a queue item's G-code to a Creality / Klipper printer and start it.
+
+        What the Bambu path does that this one deliberately does not: no FTPS upload, no
+        ``project_file`` command, no AMS mapping, no preheat soak, no 3MF archive. The
+        file must already be sliced to plain ``.gcode``; Moonraker's upload endpoint
+        stores it and starts it in one request. The archive for the run is the usual
+        name-and-timing one the print-start callback records when the printer reports
+        the job, exactly as for a print started from Creality Print or Fluidd.
+        """
+        from backend.app.services.moonraker_client import MoonrakerClient
+
+        async def fail(message: str, *, notify: bool = True) -> None:
+            item.status = "failed"
+            item.error_message = message
+            item.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.warning("Queue item %s (Moonraker): %s", item.id, message)
+            if notify:
+                try:
+                    await notification_service.on_queue_job_failed(
+                        job_name=(Path(job_filename).stem if job_filename else f"job {item.id}"),
+                        printer_id=printer.id,
+                        printer_name=printer.name,
+                        reason=message,
+                        db=db,
+                    )
+                    await ws_manager.send_queue_item_failed(
+                        user_id=item.created_by_id,
+                        queue_item_id=item.id,
+                        printer_id=item.printer_id,
+                        reason="moonraker_start_failed",
+                    )
+                except Exception:  # noqa: BLE001 - notifications are best effort
+                    pass
+            await self._power_off_if_needed(db, item)
+
+        job_filename: str | None = None
+
+        client = printer_manager.get_client(item.printer_id)
+        if not isinstance(client, MoonrakerClient) or not printer_manager.is_connected(item.printer_id):
+            await fail("Printer not connected", notify=False)
+            return
+
+        # Cancelled between the scheduler's snapshot and now: nothing has been sent yet.
+        await db.refresh(item)
+        if item.status != "pending":
+            return
+
+        # A job that reached us while the printer is already busy waits for a later tick.
+        pre_state = getattr(printer_manager.get_status(item.printer_id), "state", None)
+        if pre_state in _ACTIVE_PRINT_STATES:
+            logger.info("Queue item %s: printer %s is busy (%s) - deferring", item.id, item.printer_id, pre_state)
+            return
+
+        library_file: LibraryFile | None = None
+        file_path: Path | None = None
+        if item.library_file_id:
+            library_file = (
+                await db.execute(LibraryFile.active().where(LibraryFile.id == item.library_file_id))
+            ).scalar_one_or_none()
+            if library_file is None:
+                await fail("Library file not found - it was deleted or trashed after this job was queued")
+                return
+            lib_path = Path(library_file.file_path)
+            file_path = lib_path if lib_path.is_absolute() else settings.base_dir / library_file.file_path
+            job_filename = library_file.filename
+        elif item.archive_id:
+            archive = await db.get(PrintArchive, item.archive_id)
+            if archive is None:
+                await fail("Archive not found")
+                return
+            job_filename = archive.filename
+            if not archive.file_path:
+                await fail(
+                    "This archive has no G-code file (it records a print started elsewhere), so it cannot be reprinted"
+                )
+                return
+            file_path = settings.base_dir / archive.file_path
+        else:
+            await fail("This queue item has no file to print")
+            return
+
+        if not file_path.is_file():
+            await fail("Source file not found on disk")
+            return
+        lower_name = job_filename.lower()
+        send_path = file_path
+        temp_dir: Path | None = None
+        if lower_name.endswith(".3mf"):
+            # A sliced 3MF carries the real G-code inside; the printer wants only that.
+            stem = job_filename[: -len(".gcode.3mf")] if lower_name.endswith(".gcode.3mf") else job_filename[:-4]
+            remote_name = f"{Path(stem).name}.gcode"
+            temp_dir = Path(tempfile.mkdtemp(prefix="bambuddy-gcode-"))
+            send_path = temp_dir / remote_name
+            try:
+                has_gcode = await asyncio.to_thread(
+                    extract_plate_gcode_from_3mf, file_path, _effective_plate_id(item.plate_id, file_path), send_path
+                )
+            except Exception as exc:  # noqa: BLE001 - a corrupt zip is a user-facing failure, not a crash
+                has_gcode, reason = False, f"it could not be read ({type(exc).__name__})"
+            else:
+                reason = "it holds no sliced G-code"
+            if not has_gcode:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                await fail(
+                    f"'{job_filename}' cannot be sent to a Creality printer: {reason}. "
+                    "Slice the model in Creality Print first (or export plain G-code) and queue that."
+                )
+                return
+        elif lower_name.endswith(".gcode"):
+            remote_name = Path(job_filename).name  # the printer's gcodes root has no sub-folders
+        else:
+            await fail(
+                f"Creality printers print .gcode files (or a sliced .3mf), but '{job_filename}' is neither. "
+                "Slice it with Creality Print and queue the result."
+            )
+            return
+        await self._propagate_owner_to_printer_manager(db, item)
+
+        # Status goes to "printing" BEFORE the command, as on the Bambu path: a crash between the
+        # two then leaves a stuck item rather than a reprint hours later. The compare-and-set
+        # keeps a /cancel that landed mid-dispatch from being overwritten.
+        now_utc = datetime.now(timezone.utc)
+        billing_run_id = str(uuid.uuid4())
+        cas = await db.execute(
+            update(PrintQueueItem)
+            .where(PrintQueueItem.id == item.id)
+            .where(PrintQueueItem.status == "pending")
+            .values(status="printing", started_at=now_utc, billing_run_id=billing_run_id)
+        )
+        await db.commit()
+        if cas.rowcount == 0:
+            logger.info("Queue item %s no longer pending - not sending it to the printer", item.id)
+            return
+        item.status = "printing"
+        item.started_at = now_utc
+        item.billing_run_id = billing_run_id
+
+        logger.info("Queue item %s: sending %s to %s via Moonraker", item.id, remote_name, printer.name)
+        try:
+            sent = await asyncio.to_thread(client.upload_and_print, str(send_path), remote_name, True)
+        finally:
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        if not sent:
+            item.started_at = None
+            await fail(client.last_error or "The printer did not accept the file")
+            return
+
+        self._unconfirmed_budget_reservations.discard(item.id)
+        self._mark_printer_dispatched(item.printer_id, pre_state, None)
+
+        # A file that was only uploaded to be printed once is removed from the library.
+        if item.cleanup_library_after_dispatch and library_file is not None and not library_file.is_external:
+            try:
+                paths = [file_path]
+                if library_file.thumbnail_path:
+                    thumb = Path(library_file.thumbnail_path)
+                    paths.append(thumb if thumb.is_absolute() else settings.base_dir / library_file.thumbnail_path)
+                item.library_file_id = None
+                await db.delete(library_file)
+                await db.commit()
+                for path in paths:
+                    path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001 - the print is already running
+                logger.warning("Queue item %s: could not remove the transient library file", item.id, exc_info=True)
+                await db.rollback()
+
+        await notification_service.on_queue_job_started(
+            job_name=Path(remote_name).stem,
+            printer_id=printer.id,
+            printer_name=printer.name,
+            db=db,
+            estimated_time=item.print_time_seconds or None,
+        )
+        try:
+            from backend.app.services.mqtt_relay import mqtt_relay
+
+            await mqtt_relay.on_queue_job_started(
+                job_id=item.id,
+                filename=job_filename,
+                printer_id=printer.id,
+                printer_name=printer.name,
+                printer_serial=printer.serial_number,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("Queue item %s: print started on %s", item.id, printer.name)
+
     async def _start_print(self, db: AsyncSession, item: PrintQueueItem):
         """Upload file and start print for a queue item.
 
@@ -7298,19 +7491,10 @@ class PrintScheduler:
             await self._power_off_if_needed(db, item)
             return
 
-        # Creality / Klipper printers are monitored and controlled, but Bambuddy cannot
-        # yet push a sliced file to them: the upload below is Bambu FTPS. Fail the item
-        # with a reason a person can act on instead of an opaque FTP connection error.
+        # Creality / Klipper printers take a plain .gcode over Moonraker's HTTP API: no FTPS,
+        # no MQTT project_file, no AMS. They have their own, much shorter path.
         if getattr(printer, "printer_type", "bambu") != "bambu":
-            item.status = "failed"
-            item.error_message = (
-                "Starting prints from Bambuddy is not supported for Creality printers yet. "
-                "Start the print from Creality Print or Fluidd; Bambuddy still monitors and archives it."
-            )
-            item.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-            logger.error("Queue item %s: printer %s is not a Bambu printer", item.id, item.printer_id)
-            await self._power_off_if_needed(db, item)
+            await self._start_print_moonraker(db, item, printer)
             return
 
         # Check printer is connected

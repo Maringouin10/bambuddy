@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { api, type PrinterStatus } from '../../api/client';
 import { getColorName } from '../../utils/colors';
-import { isGcodeCompatible } from '../../utils/printer';
+import { isGcodeCompatible, isModelMatchForPrinter } from '../../utils/printer';
 import {
   normalizeColorForCompare,
   colorsAreSimilar,
@@ -288,7 +288,7 @@ export function PrinterSelector({
       return activePrinters;
     }
     // Filter to only show printers matching the sliced model
-    const matching = activePrinters.filter((p) => p.model === slicedForModel);
+    const matching = activePrinters.filter((p) => isModelMatchForPrinter(slicedForModel, p.model));
     // If no matching printers, show all
     return matching.length > 0 ? matching : activePrinters;
   }, [activePrinters, assignmentMode, slicedForModel, showAllPrinters]);

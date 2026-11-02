@@ -17,7 +17,7 @@ import {
 } from '../../hooks/useFilamentMapping';
 import { useMultiPrinterFilamentMapping, type PerPrinterConfig } from '../../hooks/useMultiPrinterFilamentMapping';
 import { getColorName } from '../../utils/colors';
-import { isGcodeCompatible, isPrinterCurrentlyDispatchable } from '../../utils/printer';
+import { isGcodeCompatible, isModelMatchForPrinter, isPrinterCurrentlyDispatchable } from '../../utils/printer';
 import { getCurrencySymbol } from '../../utils/currency';
 import { getBedTypeInfo } from '../../utils/bedType';
 import { toDateTimeLocalValue, parseUTCDate } from '../../utils/date';
@@ -349,13 +349,10 @@ export function PrintModal({
   const defaultCostPerKg = settings?.default_filament_cost ?? 0;
   const billingEnabled = settings?.billing_enabled === true;
 
-  const { data: allPrinters, isLoading: loadingPrinters } = useQuery({
+  const { data: printers, isLoading: loadingPrinters } = useQuery({
     queryKey: ['printers'],
     queryFn: api.getPrinters,
   });
-  // Creality (Moonraker) printers are monitor-and-control only for now: Bambuddy cannot
-  // upload a sliced file to them, so they are not offered as print targets.
-  const printers = useMemo(() => allPrinters?.filter((p) => p.printer_type !== 'creality'), [allPrinters]);
 
   const { data: myCostCenters, isLoading: loadingCostCenters } = useQuery({
     queryKey: ['finance', 'cost-centers', 'mine'],
@@ -446,6 +443,14 @@ export function PrintModal({
 
   // Get sliced_for_model from archive or library file
   const slicedForModel = archiveDetails?.sliced_for_model || libraryFileDetails?.sliced_for_model || null;
+
+  // Bed levelling, flow / vibration calibration, first-layer AI inspection, timelapse and the
+  // preheat soak are Bambu print-command options. A Creality printer is sent plain G-code, which
+  // carries its own start sequence, so none of them applies when every target is a Creality.
+  const onlyCrealityTargets =
+    assignmentMode === 'printer' &&
+    selectedPrinters.length > 0 &&
+    selectedPrinters.every((id) => printers?.find((p) => p.id === id)?.printer_type === 'creality');
 
   // The archive's own saved AMS-slot pick from the slicer (see the "Save AMS
   // mapping" virtual-printer setting) — undefined for library files or
@@ -1819,7 +1824,7 @@ export function PrintModal({
             {/* Compatibility warning when sliced model doesn't match selected printer */}
             {slicedForModel && assignmentMode === 'printer' && selectedPrinters.length === 1 && (() => {
               const selectedPrinter = printers?.find(p => p.id === selectedPrinters[0]);
-              if (selectedPrinter && selectedPrinter.model && slicedForModel !== selectedPrinter.model) {
+              if (selectedPrinter && selectedPrinter.model && !isModelMatchForPrinter(slicedForModel, selectedPrinter.model)) {
                 return (
                   <div className="p-3 mb-2 bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-300 dark:border-yellow-500/30 rounded-lg flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
@@ -1918,7 +1923,7 @@ export function PrintModal({
             })}
 
             {/* Print options */}
-            {(mode === 'create' || effectivePrinterCount > 0 || (assignmentMode === 'model' && targetModel)) && (
+            {!onlyCrealityTargets && (mode === 'create' || effectivePrinterCount > 0 || (assignmentMode === 'model' && targetModel)) && (
               <PrintOptionsPanel
                 options={printOptions}
                 onChange={setPrintOptions}

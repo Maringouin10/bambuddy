@@ -8,7 +8,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getPrinterImage, isGcodeCompatible, filterCompatibleQueueItems } from '../../utils/printer';
+import {
+  getPrinterImage,
+  isGcodeCompatible,
+  isCrealityModel,
+  isModelMatchForPrinter,
+  filterCompatibleQueueItems,
+} from '../../utils/printer';
 import type { PrintQueueItem } from '../../api/client';
 
 describe('getPrinterImage', () => {
@@ -216,5 +222,38 @@ describe('filterCompatibleQueueItems — printer-targeted jobs (#3133)', () => {
   it('still filters the same job while it targets any printer of a model', () => {
     const item = { id: 1, printer_id: null, target_model: 'P2S', filament_overrides: boneWhite } as unknown as PrintQueueItem;
     expect(filterCompatibleQueueItems([item], loadedTypes, loadedBrown)).toHaveLength(0);
+  });
+});
+
+
+describe('Creality model matching', () => {
+  it('recognises Creality machine names', () => {
+    for (const m of ['Ender-3 V3 KE', 'Creality Ender-3 V3', 'K2 Plus', 'K2 Pro', 'k1c', 'ENDER-3 V3 PLUS']) {
+      expect(isCrealityModel(m)).toBe(true);
+    }
+    for (const m of ['P1S', 'X1C', 'A1 Mini', 'H2D', 'K', '', null, undefined]) {
+      expect(isCrealityModel(m)).toBe(false);
+    }
+  });
+
+  it('accepts any Creality G-code on any Creality printer', () => {
+    // The regression: a file sliced for "Creality Ender-3 V3" was refused on a printer saved as
+    // "Ender-3 V3 Plus", and the Ender was not even offered as a target.
+    expect(isModelMatchForPrinter('Creality Ender-3 V3', 'Ender-3 V3 Plus')).toBe(true);
+    expect(isModelMatchForPrinter('Creality Ender-3 V3', 'K2 Plus')).toBe(true);
+    expect(isGcodeCompatible('Creality Ender-3 V3', 'Ender-3 V3 KE')).toBe(true);
+  });
+
+  it('still refuses to mix Bambu and Creality', () => {
+    expect(isModelMatchForPrinter('Creality Ender-3 V3', 'P1S')).toBe(false);
+    expect(isModelMatchForPrinter('P1S', 'Ender-3 V3 Plus')).toBe(false);
+    expect(isGcodeCompatible('X1C', 'K2 Plus')).toBe(false);
+  });
+
+  it('keeps the Bambu rules: exact model (case-insensitive) and unknown passes', () => {
+    expect(isModelMatchForPrinter('P1S', 'p1s')).toBe(true);
+    expect(isModelMatchForPrinter('P1S', 'X1C')).toBe(false);
+    expect(isModelMatchForPrinter(null, 'X1C')).toBe(true);
+    expect(isModelMatchForPrinter('P1S', undefined)).toBe(true);
   });
 });

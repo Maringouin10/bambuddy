@@ -466,7 +466,21 @@ def is_gcode_compatible(sliced_for_model: str | None, target_model: str | None) 
     b = _norm(target_model)
     if a == b:
         return True
+    # Creality slicer profiles are named per machine ("Creality Ender-3 V3", "... KE") and
+    # people routinely slice with a neighbouring profile, so any Creality G-code is accepted
+    # on any Creality printer. Bambu 3MFs are still refused (a Bambu file has no business
+    # on a Klipper machine, and vice versa).
+    if is_creality_model(a) and is_creality_model(b):
+        return True
     return any(a in family and b in family for family in GCODE_COMPAT_FAMILIES)
+
+
+def is_creality_model(model: str | None) -> bool:
+    """True for Creality machine names ("Ender-3 V3 KE", "Creality K2 Plus", "K2 Pro" ...)."""
+    if not model:
+        return False
+    norm = model.strip().upper().replace(" ", "").replace("-", "").replace("_", "")
+    return norm.startswith(("CREALITY", "ENDER")) or (len(norm) > 1 and norm[0] == "K" and norm[1] in "12")
 
 
 def normalize_printer_model_id(model_id: str | None) -> str | None:

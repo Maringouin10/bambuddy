@@ -857,6 +857,7 @@ export default {
     },
     developerModeWarning: "Режим LAN для разработчиков не включён на: {{names}}. Некоторые функции могут не работать.",
     howToEnable: "Как включить",
+    crealityGcodeOnly: 'Принтеры Creality печатают обычные файлы .gcode. Нарежьте модель в Creality Print и используйте файл .gcode.',
     incompatibleFile: "Файл подготовлен для {{slicedFor}}, а выбранный принтер — {{printerModel}}",
     dropNotPrintable: "Для печати подходят только файлы .gcode и .gcode.3mf",
     dropToPrint: "Перетащите файл для печати",

@@ -238,7 +238,7 @@ def calculate_file_hash(file_path: Path) -> str:
     return sha256_hash.hexdigest()
 
 
-def validate_print_file_upload(filename: str, content: bytes) -> None:
+def validate_print_file_upload(filename: str, content: bytes, *, allow_raw_gcode: bool = False) -> None:
     """Reject obviously-unprintable uploads early so the printer doesn't see them (#1401).
 
     Bambu printers in network mode only parse ``.gcode.3mf`` zip containers
@@ -265,7 +265,7 @@ def validate_print_file_upload(filename: str, content: bytes) -> None:
     is_3mf_upload = lower_filename.endswith(".3mf")
     is_raw_gcode_upload = lower_filename.endswith(".gcode") and not lower_filename.endswith(".gcode.3mf")
 
-    if is_raw_gcode_upload:
+    if is_raw_gcode_upload and not allow_raw_gcode:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -285,6 +285,44 @@ def validate_print_file_upload(filename: str, content: bytes) -> None:
                 "from your slicer using its 'Export Plate Sliced File' action."
             ),
         )
+
+
+async def _has_non_bambu_printer(db: AsyncSession) -> bool:
+    """True when at least one printer is not a Bambu printer (Creality / Klipper)."""
+    from backend.app.models.printer import Printer
+
+    count = await db.scalar(select(func.count()).select_from(Printer).where(Printer.printer_type != "bambu"))
+    return bool(count)
+
+
+_GCODE_MODEL_RE = re.compile(rb"^;\s*(printer_model|printer_settings_id)\s*=\s*(.+?)\s*$", re.MULTILINE)
+
+
+def read_gcode_printer_model(file_path: Path) -> str | None:
+    """The machine a plain G-code was sliced for, from the slicer's own header comments.
+
+    Orca-family slicers (Creality Print included) write ``; printer_model = ...`` and
+    ``; printer_settings_id = Creality Ender-3 V3 0.4 nozzle`` in a config block that may sit at
+    the top or the very end of the file, so both ends are read. None when neither is present.
+    """
+    try:
+        size = file_path.stat().st_size
+        with open(file_path, "rb") as fh:
+            head = fh.read(32_768)
+            tail = b""
+            if size > 32_768 + 262_144:
+                fh.seek(-262_144, 2)
+                tail = fh.read()
+    except OSError:
+        return None
+    found: dict[str, str] = {}
+    for match in _GCODE_MODEL_RE.finditer(head + b"\n" + tail):
+        found.setdefault(match.group(1).decode(), match.group(2).decode("utf-8", "replace"))
+    model = found.get("printer_model")
+    if not model and found.get("printer_settings_id"):
+        # "Creality Ender-3 V3 0.4 nozzle" -> "Creality Ender-3 V3"
+        model = re.sub(r"\s+\d+(\.\d+)?\s*(mm)?\s*nozzle.*$", "", found["printer_settings_id"], flags=re.IGNORECASE)
+    return model.strip() or None if model else None
 
 
 def _resolve_upload_destination(target_folder: LibraryFolder | None, filename: str) -> tuple[Path, bool]:
@@ -2347,7 +2385,9 @@ async def upload_file(
         # Read upload now so the validation can sniff magic bytes; the file
         # is written to disk only after the checks. #1401.
         content = await file.read()
-        validate_print_file_upload(filename, content)
+        # Raw .gcode is unprintable on a Bambu printer but is exactly what a Creality / Klipper
+        # printer takes, so it is accepted as soon as one is configured.
+        validate_print_file_upload(filename, content, allow_raw_gcode=await _has_non_bambu_printer(db))
 
         # Save file
         with open(file_path, "wb") as f:
@@ -2409,6 +2449,9 @@ async def upload_file(
                 logger.warning("Failed to parse 3MF: %s", e)
 
         elif ext == ".gcode":
+            sliced_for = read_gcode_printer_model(file_path)
+            if sliced_for:
+                metadata["sliced_for_model"] = sliced_for
             # Extract embedded thumbnail from gcode
             try:
                 thumbnail_data = extract_gcode_thumbnail(file_path)
