@@ -15,6 +15,7 @@ import {
   isModelMatchForPrinter,
   filterCompatibleQueueItems,
 } from '../../utils/printer';
+import { getAmsLabel } from '../../utils/amsHelpers';
 import type { PrintQueueItem } from '../../api/client';
 
 describe('getPrinterImage', () => {
@@ -255,5 +256,16 @@ describe('Creality model matching', () => {
     expect(isModelMatchForPrinter('P1S', 'X1C')).toBe(false);
     expect(isModelMatchForPrinter(null, 'X1C')).toBe(true);
     expect(isModelMatchForPrinter('P1S', undefined)).toBe(true);
+  });
+});
+
+
+describe('getAmsLabel for the Creality CFS', () => {
+  it('calls a CFS unit CFS, and leaves Bambu units alone', () => {
+    expect(getAmsLabel(0, 4, 'cfs')).toBe('CFS-A');
+    expect(getAmsLabel(1, 4, 'cfs')).toBe('CFS-B');
+    expect(getAmsLabel(0, 4)).toBe('AMS-A');
+    expect(getAmsLabel(0, 4, 'ams')).toBe('AMS-A');
+    expect(getAmsLabel(128, 1)).toBe('HT-A');
   });
 });

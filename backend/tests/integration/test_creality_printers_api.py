@@ -304,3 +304,30 @@ class TestRawGcodeInTheLibrary:
         path = tmp_path / "big.gcode"
         path.write_bytes(b"G1 X1 Y1\n" * 120_000 + b"; CONFIG_BLOCK_START\n; printer_model = Creality Ender-3 V3\n")
         assert read_gcode_printer_model(path) == "Creality Ender-3 V3"
+
+
+class TestCrealityCfsInStatus:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_cfs_units_reach_the_status_response_like_an_ams(self, async_client: AsyncClient, printer_factory):
+        from backend.app.services.moonraker_client import parse_cfs_stock
+        from backend.tests.unit.services.test_moonraker_client import BOX_STOCK
+
+        printer = await printer_factory(name="K2", printer_type="creality", model="K2 Plus")
+        state = PrinterState(connected=True, state="IDLE", ftp_capable=False)
+        state.raw_data = {"ams": parse_cfs_stock(BOX_STOCK)}
+
+        with patch("backend.app.services.printer_manager.printer_manager.get_status", return_value=state):
+            body = (await async_client.get(f"/api/v1/printers/{printer.id}/status")).json()
+
+        assert body["ams_exists"] is True
+        unit = body["ams"][0]
+        assert (unit["humidity"], unit["temp"], unit["module_type"]) == (48, 27.0, "cfs")
+        tray = unit["tray"][0]
+        assert (tray["tray_color"], tray["tray_type"], tray["tray_sub_brands"], tray["remain"]) == (
+            "C12E1FFF",
+            "PLA",
+            "Hyper PLA",
+            30,
+        )
+        assert unit["tray"][2]["exists"] is False

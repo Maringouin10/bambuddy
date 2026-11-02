@@ -5374,13 +5374,13 @@ function PrinterCard({
                                 <AmsNameHoverCard
                                   ams={ams}
                                   printerId={printer.id}
-                                  label={getAmsLabel(ams.id, ams.tray.length)}
+                                  label={getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
                                   amsLabels={amsLabels}
                                   canEdit={hasPermission('printers:update')}
                                   onSaved={refetchAmsLabels}
                                 >
                                   <span className="block truncate text-[length:var(--pc-t10,10px)] text-white font-medium cursor-default select-none">
-                                    {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length)}
+                                    {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
                                   </span>
                                 </AmsNameHoverCard>
                                 {sideBadge?.kind === 'inlet' ? (
@@ -6003,13 +6003,13 @@ function PrinterCard({
                                 <AmsNameHoverCard
                                   ams={ams}
                                   printerId={printer.id}
-                                  label={getAmsLabel(ams.id, ams.tray.length)}
+                                  label={getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
                                   amsLabels={amsLabels}
                                   canEdit={hasPermission('printers:update')}
                                   onSaved={refetchAmsLabels}
                                 >
                                   <span className="block truncate text-[length:var(--pc-t10,10px)] text-white font-medium cursor-default select-none">
-                                    {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length)}
+                                    {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length, ams.module_type)}
                                   </span>
                                 </AmsNameHoverCard>
                                 {sideBadge?.kind === 'inlet' ? (

@@ -150,6 +150,146 @@ def fan_percent(ref: FanRef, status: dict) -> int | None:
     return max(0, min(100, int(round(value * 100))))
 
 
+# Creality filament codes ("1XXXXX") seen on the K2's CFS. The printer carries the full table in
+# its own material_database.json; these are the ones documented so far. An unknown code is shown
+# by its number rather than guessed at.
+CFS_MATERIALS = {
+    "100001": ("PLA", "Generic PLA"),
+    "101001": ("PLA", "Hyper PLA"),
+    "102001": ("PLA-CF", "Hyper PLA-CF"),
+    "100005": ("TPU", "Generic TPU"),
+}
+_CFS_NONE = {"", "none", "unknown", "-1", "null"}
+_CFS_SLOT_LETTERS = "ABCD"
+
+
+def _cfs_color(value: object) -> str | None:
+    """``"0RRGGBB"`` (stock) or ``"#RRGGBB"`` (flat) -> ``"RRGGBBFF"``; None for empty / unknown."""
+    text = str(value or "").strip().lstrip("#")
+    if text.lower() in _CFS_NONE:
+        return None
+    if len(text) == 7 and text[0] == "0":
+        text = text[1:]
+    if len(text) == 6 and all(c in "0123456789abcdefABCDEF" for c in text):
+        return text.upper() + "FF"
+    return None
+
+
+def _cfs_float(value: object) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _cfs_rfid_length_m(vender: object) -> int | None:
+    """Full spool length in metres from a 40-character Creality RFID record, when plausible."""
+    text = str(vender or "")
+    if len(text) != 40:
+        return None
+    digits = text[24:28]
+    if digits.isdigit() and 50 <= int(digits) <= 2000:
+        return int(digits)
+    return None
+
+
+def parse_cfs_stock(box: dict) -> list[dict]:
+    """AMS-shaped units from the stock ``box`` object (``T1``..``T4``, arrays per slot A-D)."""
+    units: list[dict] = []
+    for number in range(1, 5):
+        unit = box.get(f"T{number}")
+        if not isinstance(unit, dict) or str(unit.get("state", "")).lower() != "connect":
+            continue
+
+        def column(name: str, unit=unit) -> list:
+            value = unit.get(name)
+            return list(value) if isinstance(value, list) else []
+
+        venders, colors = column("vender"), column("color_value")
+        materials, remains = column("material_type"), column("remain_len")
+        trays = []
+        for i, letter in enumerate(_CFS_SLOT_LETTERS):
+            vender = venders[i] if i < len(venders) else "none"
+            present = str(vender).strip().lower() != "none"
+            code = str(materials[i]).strip() if i < len(materials) else ""
+            known = CFS_MATERIALS.get(code)
+            meters = _cfs_float(remains[i]) if i < len(remains) else None
+            total = _cfs_rfid_length_m(vender)
+            remain = -1
+            if present and meters is not None and meters >= 0 and total:
+                remain = max(0, min(100, round(meters / total * 100)))
+            trays.append(
+                {
+                    "id": i,
+                    "tray_color": _cfs_color(colors[i]) if present and i < len(colors) else None,
+                    "tray_type": known[0] if present and known else None,
+                    "tray_sub_brands": (
+                        known[1] if known else (f"Material {code}" if code.lower() not in _CFS_NONE else None)
+                    )
+                    if present
+                    else None,
+                    "remain": remain,
+                    "remain_m": meters if present and meters is not None and meters >= 0 else None,
+                    "state": 10 if present else 9,
+                    "exists": present,
+                    "cfs_slot": f"T{number}{letter}",
+                }
+            )
+        humidity = _cfs_float(unit.get("dry_and_humidity"))
+        temperature = _cfs_float(unit.get("temperature"))
+        units.append(
+            {
+                "id": number - 1,
+                "humidity_raw": humidity,
+                "temp": temperature,
+                "sn": str(unit.get("sn") or ""),
+                "sw_ver": str(unit.get("version") or ""),
+                "module_type": "cfs",
+                "tray": trays,
+            }
+        )
+    return units
+
+
+def parse_cfs_flat(box: dict) -> tuple[list[dict], int]:
+    """AMS-shaped units and the loaded slot (-1 if none) from the flat ``box`` variant (``slots[]``)."""
+    slots = [x for x in box.get("slots", []) if isinstance(x, dict) and not x.get("external")]
+    loaded = box.get("loaded_slot")
+    loaded = loaded if isinstance(loaded, int) else -1
+    by_unit: dict[int, list[dict]] = {}
+    for slot in slots:
+        index = slot.get("index")
+        if not isinstance(index, int) or index < 0:
+            continue
+        present = bool(slot.get("present"))
+        material = str(slot.get("material") or "").strip()
+        percent = slot.get("rfid_percent")
+        by_unit.setdefault(index // 4, []).append(
+            {
+                "id": index % 4,
+                "tray_color": _cfs_color(slot.get("color")) if present else None,
+                "tray_type": material or None if present else None,
+                "tray_sub_brands": (str(slot.get("name") or material) or None) if present else None,
+                "remain": max(0, min(100, round(percent))) if isinstance(percent, (int, float)) else -1,
+                "state": 11 if index == loaded else (10 if present else 9),
+                "exists": present,
+            }
+        )
+    units = []
+    for unit_id in sorted(by_unit):
+        trays = sorted(by_unit[unit_id], key=lambda t: t["id"])
+        units.append(
+            {
+                "id": unit_id,
+                "humidity_raw": _cfs_float(box.get("humidity_pct")),
+                "temp": _cfs_float(box.get("temp_c")),
+                "module_type": "cfs",
+                "tray": trays,
+            }
+        )
+    return units, loaded
+
+
 def _slug_name(filename: str | None) -> str | None:
     """``/gcodes/sub/benchy.gcode`` -> ``benchy`` (the display/subtask name)."""
     if not filename:
@@ -234,6 +374,8 @@ class MoonrakerClient:
         self._query_objects: list[str] = list(CORE_OBJECTS)
         self._light_pin: str | None = None
         self._fans: dict[str, FanRef] = {}
+        self._has_box = False
+        self._unknown_cfs_logged: set[str] = set()
         self._state_before_power_off: str | None = None
 
         # print lifecycle tracking (mirrors BambuMQTTClient's bookkeeping)
@@ -346,6 +488,10 @@ class MoonrakerClient:
         self._chamber_heater = heater.split(" ", 1)[1] if heater else None
         if self._chamber_object:
             objects.append(self._chamber_object)
+        # CFS (K2 series): the multi-filament module is the Klipper `box` object.
+        self._has_box = "box" in listed
+        if self._has_box:
+            objects.append("box")
         # Fans: query exactly the ones this printer has.
         self._fans = discover_fans(listed)
         for ref in self._fans.values():
@@ -415,6 +561,7 @@ class MoonrakerClient:
 
         self._apply_temperatures(st)
         self._apply_fans_and_speed(st)
+        self._apply_cfs(st.get("box"))
         self._apply_progress(new_state, filename, stats, sdcard, display, st)
 
         self.state.state = new_state
@@ -462,6 +609,32 @@ class MoonrakerClient:
                 temps["chamber_heating"] = (
                     temps["chamber_target"] > 0 and temps["chamber"] < temps["chamber_target"] - 2
                 )
+
+    def _apply_cfs(self, box: object) -> None:
+        """Present the CFS as AMS units (colour, material, remaining, humidity) in ``raw_data``."""
+        if not self._has_box or not isinstance(box, dict):
+            self.state.raw_data.pop("ams", None)
+            return
+        if "slots" in box:
+            units, loaded = parse_cfs_flat(box)
+            self.state.tray_now = loaded if loaded >= 0 else 255
+        else:
+            units, loaded = parse_cfs_stock(box), -1
+        if units:
+            self.state.raw_data["ams"] = units
+        else:
+            self.state.raw_data.pop("ams", None)
+        for unit in units:
+            for tray in unit["tray"]:
+                name = tray.get("tray_sub_brands") or ""
+                if name.startswith("Material ") and name not in self._unknown_cfs_logged:
+                    self._unknown_cfs_logged.add(name)
+                    logger.info(
+                        "[%s] CFS slot %s holds an unrecognised filament code (%s)",
+                        self.ip_address,
+                        tray.get("cfs_slot"),
+                        name,
+                    )
 
     def _apply_fans_and_speed(self, st: dict) -> None:
         for role, attr in (
@@ -837,6 +1010,20 @@ class MoonrakerClient:
 
     def clear_hms_errors(self) -> bool:
         return False
+
+    # The Bambu AMS / calibration / HMS control surface. The CFS is displayed read-only (loading and
+    # unloading it means Creality's BOX_* / M8200 commands, which are not driven from here), so these
+    # report "not supported" and the route says so, instead of failing on a missing attribute.
+    def _unsupported(self, *_args: object, **_kwargs: object) -> bool:
+        return False
+
+    ams_load_filament = ams_unload_filament = ams_control = ams_set_filament_setting = _unsupported
+    reset_ams_slot = extrusion_cali_sel = extrusion_cali_set = start_calibration = _unsupported
+    set_xcam_option = set_ams_filament_backup = select_extruder = execute_hms_action = _unsupported
+    send_drying_command = _unsupported
+
+    def register_assignment_verification(self, *_args: object, **_kwargs: object) -> None:
+        return None
 
     def skip_objects(self, object_ids: list[int]) -> bool:  # noqa: ARG002
         return False

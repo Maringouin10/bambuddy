@@ -80,7 +80,7 @@ export function resolveSlotExtruder(
  * inferred from the id alone — regular AMS IDs 0-3 can collide with the
  * normalized HT range otherwise.
  */
-export function getAmsLabel(amsId: number | string, trayCount: number): string {
+export function getAmsLabel(amsId: number | string, trayCount: number, moduleType?: string | null): string {
   const id = typeof amsId === 'string' ? parseInt(amsId, 10) : amsId;
   const safeId = isNaN(id) ? 0 : id;
   if (safeId === 255) return 'External';
@@ -91,6 +91,8 @@ export function getAmsLabel(amsId: number | string, trayCount: number): string {
   const isHt = trayCount === 1;
   const normalizedId = safeId >= 128 ? safeId - 128 : safeId;
   const letter = String.fromCharCode(65 + normalizedId);
+  // Creality's CFS (K2 series) is presented as an AMS unit but is not one, so say what it is.
+  if (moduleType === 'cfs') return `CFS-${letter}`;
   return isHt ? `HT-${letter}` : `AMS-${letter}`;
 }
 

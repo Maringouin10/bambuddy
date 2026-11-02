@@ -833,7 +833,8 @@ Creality printers that run Klipper with Moonraker — the **Ender-3 V3** family 
 | Live status (state, progress, time left, layers, temperatures, fan) | Bambu-only print options (bed levelling, flow/vibration calibration, AI inspection, preheat soak) — a Creality file carries its own start sequence |
 | Print archive, notifications, smart plugs, MQTT relay | Reprinting an archive (a Creality archive keeps the name and timing, not the G-code) |
 | Pause / resume / stop, nozzle & bed temperature, speed, part fan, light, home, jog | AMS, HMS, K-profiles, drying (Klipper printers do not have them) |
-| K2 series: chamber temperature and chamber heating, chamber fan | K2 CFS (multi-filament system) status |
+| K2 series: chamber temperature and chamber heating, chamber fan | Loading / unloading the CFS from Bambuddy, and assigning spools to CFS slots |
+| K2 CFS: each unit's four slots with colour, material, remaining filament, humidity and temperature (shown like an AMS, labelled CFS-A, CFS-B …) | |
 | Webcam: Bambuddy looks for a working MJPEG address on its own (see below) | |
 
 This was built against Moonraker's documented API and a simulated printer and has **not been tried on real hardware yet** — please report what you see on your printer.

@@ -21,6 +21,8 @@ from backend.app.services.moonraker_client import (
     _slug_name,
     discover_fans,
     fan_percent,
+    parse_cfs_flat,
+    parse_cfs_stock,
     speed_percent_to_level,
 )
 from backend.app.services.print_storage import REASON_NO_FTP_SERVICE, print_file_reachable_over_ftp
@@ -958,3 +960,122 @@ def test_upload_when_disconnected_or_file_missing_fails_with_a_reason(tmp_path):
     tick(connected)
     assert connected.upload_and_print(str(tmp_path / "missing.gcode")) is False
     assert "Could not read the file" in connected.last_error
+
+
+# ---------------------------------------------------------------- CFS (K2 multi-filament module)
+
+# 40-char Creality RFID record: date(5) supplier(4) batch(2) material(6) colour(7) length(4) serial(6) reserved(6)
+TAGGED = "24031" + "0276" + "01" + "101001" + "0C12E1F" + "0330" + "000001" + "000000"
+
+BOX_STOCK = {
+    "state": "connect",
+    "filament": 1,
+    "T1": {
+        "state": "connect",
+        "temperature": "27",
+        "dry_and_humidity": "48",
+        "version": "1.1.3",
+        "sn": "CFS-0001",
+        "vender": [TAGGED, "unknown", "none", "none"],
+        "color_value": ["0C12E1F", "0FFFFFF", "-1", "-1"],
+        "material_type": ["101001", "100001", "-1", "-1"],
+        "remain_len": ["99", "57", "-1", "-1"],
+    },
+    "T2": {"state": "None", "vender": ["None"] * 4, "color_value": ["-1"] * 4, "material_type": ["-1"] * 4},
+}
+
+BOX_FLAT = {
+    "api_version": 1,
+    "loaded_slot": 0,
+    "temp_c": 31.0,
+    "humidity_pct": 40,
+    "slots": [
+        {"index": 0, "name": "Creality PETG", "material": "PETG", "color": "#FF0000", "present": True, "loaded": True},
+        {"index": 1, "name": "PLA", "material": "PLA", "color": "#00FF00", "present": True, "loaded": False},
+        {"index": 2, "present": False, "material": "None", "color": "None"},
+        {"index": 3, "present": False},
+        {"index": 4, "name": "TPU", "material": "TPU", "color": "#0000FF", "present": True, "rfid_percent": 62},
+        {"index": 16, "external": True, "present": True, "material": "PLA", "color": "#ABCDEF"},
+    ],
+}
+
+
+def test_stock_cfs_becomes_ams_units_with_colour_material_and_remaining():
+    units = parse_cfs_stock(BOX_STOCK)
+
+    assert [u["id"] for u in units] == [0]  # the disconnected T2 is not shown
+    unit = units[0]
+    assert (unit["humidity_raw"], unit["temp"], unit["sn"], unit["module_type"]) == (48.0, 27.0, "CFS-0001", "cfs")
+    a, b, c, d = unit["tray"]
+    assert (a["tray_color"], a["tray_type"], a["tray_sub_brands"]) == ("C12E1FFF", "PLA", "Hyper PLA")
+    assert a["remain"] == 30  # 99 m left of the 330 m the RFID record states
+    assert a["exists"] is True and a["state"] == 10 and a["cfs_slot"] == "T1A"
+    # an untagged spool: colour and type are still read, only the percentage is unknowable
+    assert (b["tray_color"], b["tray_type"], b["remain"], b["exists"]) == ("FFFFFFFF", "PLA", -1, True)
+    # empty bays
+    assert (c["exists"], c["tray_color"], c["tray_type"], c["state"]) == (False, None, None, 9)
+    assert d["exists"] is False
+
+
+def test_an_unknown_material_code_is_shown_by_its_number_not_guessed():
+    box = {"T1": {**BOX_STOCK["T1"], "material_type": ["199999", "100001", "-1", "-1"]}}
+    tray = parse_cfs_stock(box)[0]["tray"][0]
+    assert tray["tray_type"] is None
+    assert tray["tray_sub_brands"] == "Material 199999"
+
+
+def test_flat_cfs_groups_slots_into_units_of_four_and_marks_the_loaded_one():
+    units, loaded = parse_cfs_flat(BOX_FLAT)
+
+    assert loaded == 0
+    assert [u["id"] for u in units] == [0, 1]
+    first = units[0]["tray"]
+    assert [t["id"] for t in first] == [0, 1, 2, 3]  # a unit always has four bays
+    assert [t["exists"] for t in first] == [True, True, False, False]
+    assert (first[0]["tray_color"], first[0]["tray_type"], first[0]["state"]) == ("FF0000FF", "PETG", 11)
+    assert first[1]["state"] == 10
+    assert units[1]["tray"][0]["remain"] == 62
+    assert units[0]["humidity_raw"] == 40.0
+    # the external holder (index 16) is not a CFS slot
+    assert all(t["id"] != 16 for u in units for t in u["tray"])
+
+
+def test_polling_a_k2_publishes_the_cfs_through_raw_data_ams():
+    fake = FakeMoonraker()
+    fake.objects = [*OBJECTS, "box"]
+    fake.status["box"] = BOX_STOCK
+    client = make_client(fake)
+    tick(client)
+
+    ams = client.state.raw_data["ams"]
+    assert len(ams) == 1 and ams[0]["tray"][0]["tray_sub_brands"] == "Hyper PLA"
+
+    # the CFS disappearing (a printer without one) leaves no stale units behind
+    fake.status["box"] = {"state": "None"}
+    tick(client)
+    assert "ams" not in client.state.raw_data
+
+
+def test_a_printer_without_a_box_object_never_shows_ams():
+    client = make_client(FakeMoonraker())
+    tick(client)
+    assert "ams" not in client.state.raw_data
+
+
+def test_flat_cfs_sets_the_loaded_tray():
+    fake = FakeMoonraker()
+    fake.objects = [*OBJECTS, "box"]
+    fake.status["box"] = BOX_FLAT
+    client = make_client(fake)
+    tick(client)
+    assert client.state.tray_now == 0
+
+
+def test_the_bambu_ams_controls_say_no_instead_of_crashing():
+    client = make_client(FakeMoonraker())
+    tick(client)
+    assert client.ams_load_filament(0) is False
+    assert client.ams_unload_filament() is False
+    assert client.ams_set_filament_setting(0, 0, "PLA", "FFFFFF") is False
+    assert client.extrusion_cali_sel(0, 0, 0, 0) is False
+    assert client.register_assignment_verification(0, 0, {}) is None
