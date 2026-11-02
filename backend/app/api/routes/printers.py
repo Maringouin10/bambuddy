@@ -178,6 +178,7 @@ async def create_printer(
         access_code=printer_data.access_code,
         printer_type=printer_data.printer_type,
         api_port=printer_data.api_port,
+        api_key=printer_data.api_key,
     )
     if not test_result.get("success") and printer_data.printer_type == "creality":
         raise HTTPException(
@@ -186,9 +187,14 @@ async def create_printer(
                 "code": "printer_connection_failed",
                 "reason": test_result.get("reason"),
                 "message": (
-                    "Could not reach the printer's Moonraker API. Verify the IP address and port "
-                    f"(default {7125}), and that the printer is powered on and on the same network. "
-                    "The printer was not added."
+                    "The printer's Moonraker refused the request: it needs an API key (or this host must be "
+                    "added to its trusted clients). The printer was not added."
+                    if test_result.get("reason") == "unauthorized"
+                    else (
+                        "Could not reach the printer's Moonraker API. Verify the IP address and port "
+                        f"(default {7125}), and that the printer is powered on and on the same network. "
+                        "The printer was not added."
+                    )
                 ),
             },
         )
@@ -434,7 +440,7 @@ async def update_printer(
     await db.refresh(printer)
 
     # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "is_active", "api_port"]):
+    if any(k in update_data for k in ["ip_address", "access_code", "is_active", "api_port", "api_key"]):
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)

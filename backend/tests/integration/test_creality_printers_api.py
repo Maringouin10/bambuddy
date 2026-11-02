@@ -523,3 +523,51 @@ class TestCrealityDiscoveryAPI:
             response = await async_client.post("/api/v1/discovery/creality/scan/stop")
         assert response.status_code == 200
         stop.assert_called_once()
+
+
+class TestMoonrakerApiKey:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_the_key_is_probed_with_stored_and_kept_out_of_the_create_response(
+        self, async_client: AsyncClient, db_session
+    ):
+        with patch(PROBE, new=AsyncMock(return_value=OK)) as probe:
+            response = await async_client.post(
+                "/api/v1/printers/",
+                json={"name": "E", "ip_address": "192.168.1.50", "printer_type": "creality", "api_key": "k-123"},
+            )
+
+        assert response.status_code == 200, response.text
+        assert "api_key" not in response.json()
+        assert probe.await_args.kwargs["api_key"] == "k-123"
+        row = (await db_session.execute(select(Printer).where(Printer.ip_address == "192.168.1.50"))).scalar_one()
+        assert row.api_key == "k-123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_a_trusted_caller_can_read_it_back_and_it_can_be_changed(
+        self, async_client: AsyncClient, printer_factory
+    ):
+        printer = await printer_factory(name="E", printer_type="creality", model="Ender-3 V3", api_key="old")
+
+        listed = (await async_client.get("/api/v1/printers/")).json()
+        assert [p["api_key"] for p in listed if p["id"] == printer.id] == ["old"]
+
+        with patch(
+            "backend.app.services.printer_manager.printer_manager.connect_printer", new=AsyncMock()
+        ) as reconnect:
+            updated = await async_client.patch(f"/api/v1/printers/{printer.id}", json={"api_key": "new"})
+        assert updated.status_code == 200
+        reconnect.assert_awaited_once()  # a changed key reconnects with it
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_an_unauthorized_probe_says_to_set_an_api_key(self, async_client: AsyncClient):
+        denied = {"success": False, "state": None, "model": None, "reason": "unauthorized", "webcam": None}
+        with patch(PROBE, new=AsyncMock(return_value=denied)):
+            response = await async_client.post(
+                "/api/v1/printers/", json={"name": "E", "ip_address": "192.168.1.51", "printer_type": "creality"}
+            )
+        detail = response.json()["detail"]
+        assert response.status_code == 400 and detail["reason"] == "unauthorized"
+        assert "API key" in detail["message"]

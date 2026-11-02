@@ -277,6 +277,61 @@ describe('Creality printers', () => {
     expect(await screen.findByText(/no printers found in the specified subnet/i)).toBeInTheDocument();
   });
 
+  it('sends the Moonraker API key when one is entered, and omits it otherwise', async () => {
+    await openAddModal();
+    await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));
+    await userEvent.type(screen.getByPlaceholderText(/my printer/i), 'Ender');
+    await userEvent.type(screen.getByPlaceholderText(/192\.168\.1\.100/), '192.168.1.62');
+    await userEvent.type(screen.getByLabelText(/moonraker api key/i), '  k-123  ');
+    await userEvent.click(submitButton());
+
+    await waitFor(() => expect(created).not.toBeNull());
+    expect(created).toMatchObject({ printer_type: 'creality', api_key: 'k-123' });
+  });
+
+  it('leaves the key out of the request when the field is empty', async () => {
+    await openAddModal();
+    await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));
+    await userEvent.type(screen.getByPlaceholderText(/my printer/i), 'Ender');
+    await userEvent.type(screen.getByPlaceholderText(/192\.168\.1\.100/), '192.168.1.63');
+    await userEvent.click(submitButton());
+
+    await waitFor(() => expect(created).not.toBeNull());
+    expect(created).not.toHaveProperty('api_key');
+  });
+
+  it('tells the user to set an API key when Moonraker refuses the connection', async () => {
+    server.use(
+      http.post('/api/v1/printers/', () =>
+        HttpResponse.json(
+          { detail: { code: 'printer_connection_failed', reason: 'unauthorized', message: 'needs a key' } },
+          { status: 400 },
+        ),
+      ),
+    );
+    await openAddModal();
+    await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));
+    await userEvent.type(screen.getByPlaceholderText(/my printer/i), 'Ender');
+    await userEvent.type(screen.getByPlaceholderText(/192\.168\.1\.100/), '192.168.1.64');
+    await userEvent.click(submitButton());
+
+    expect(await screen.findByText(/refused the connection: enter its api key/i)).toBeInTheDocument();
+  });
+
+  it('editing keeps the saved key unless a new one is typed', async () => {
+    server.use(http.get('/api/v1/printers/', () => HttpResponse.json([crealityPrinter])));
+    render(<PrintersPage />);
+    await waitFor(() => expect(screen.getByText('Ender 3 V3 KE')).toBeInTheDocument());
+    const menuBtn = [...document.querySelectorAll('button')].find((b) => b.querySelector('.lucide-ellipsis-vertical'))!;
+    await userEvent.click(menuBtn);
+    await userEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    await screen.findByText('Edit Printer');
+
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updated).not.toBeNull());
+    expect(updated).not.toHaveProperty('api_key');
+  });
+
   it('switching back to Bambu restores the credential fields', async () => {
     await openAddModal();
     await userEvent.click(screen.getByRole('radio', { name: 'Creality' }));

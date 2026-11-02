@@ -330,6 +330,7 @@ class MoonrakerClient:
         access_code: str = "",
         model: str | None = None,
         port: int | None = None,
+        api_key: str | None = None,
         on_state_change: Callable[[PrinterState], None] | None = None,
         on_print_start: Callable[[dict], None] | None = None,
         on_print_complete: Callable[[dict], None] | None = None,
@@ -348,6 +349,7 @@ class MoonrakerClient:
         self.access_code = access_code  # unused: stock Creality Moonraker trusts the LAN
         self.model = model
         self.port = int(port) if port else DEFAULT_MOONRAKER_PORT
+        self.api_key = api_key or None
         self.on_state_change = on_state_change
         self.on_print_start = on_print_start
         self.on_print_complete = on_print_complete
@@ -406,7 +408,8 @@ class MoonrakerClient:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._http = httpx.Client(timeout=self.HTTP_TIMEOUT, follow_redirects=False)
+        headers = {"X-Api-Key": self.api_key} if self.api_key else None
+        self._http = httpx.Client(timeout=self.HTTP_TIMEOUT, follow_redirects=False, headers=headers)
         self._thread = threading.Thread(target=self._run, name=f"moonraker-{self.ip_address}", daemon=True)
         self._thread.start()
 

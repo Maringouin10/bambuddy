@@ -483,6 +483,7 @@ export default {
       unloadInitiated: '필라멘트 언로딩 중…',
       failedToLoad: '필라멘트 로드 실패',
       failedToUnload: '필라멘트 언로드 실패',
+      crealityUnauthorized: '프린터의 Moonraker가 연결을 거부했습니다. API 키를 입력하거나 이 서버를 신뢰할 수 있는 클라이언트에 추가하세요. 프린터가 추가되지 않았습니다.',
       crealityConnectionFailedNotAdded: '프린터의 Moonraker API에 연결할 수 없습니다. IP 주소와 포트를 확인하고, 프린터가 켜져 있으며 같은 네트워크에 연결되어 있는지 확인하세요. 프린터가 추가되지 않았습니다.',
       connectionFailedNotAdded: '프린터에 연결할 수 없습니다. IP, 시리얼 번호, 액세스 코드를 확인하고 LAN 전용 모드가 켜져 있는지 확인하세요. 프린터가 추가되지 않았습니다.'
     },
@@ -553,6 +554,8 @@ export default {
       crealityHint: 'Klipper 기반 Creality 프린터(Ender-3 V3 KE, V3 CoreXZ, K1 등)는 Moonraker를 통해 제어합니다. 시리얼 번호나 액세스 코드는 필요 없으며 프린터의 IP 주소만 있으면 됩니다.',
       moonrakerPort: 'Moonraker 포트(선택 사항)',
       moonrakerPortHelp: '기본값은 7125입니다. 프린터가 다른 포트에서 Moonraker를 제공하는 경우에만 변경하세요.',
+      moonrakerApiKey: 'Moonraker API 키(선택 사항)',
+      moonrakerApiKeyHelp: '프린터의 Moonraker가 요구하는 경우에만 필요합니다. 그 외에는 비워 두세요.',
       modelOptional: '모델 (선택사항)',
       saveChanges: '변경사항 저장'
     },

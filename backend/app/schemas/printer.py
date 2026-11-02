@@ -54,6 +54,13 @@ class PrinterCreate(PrinterBase):
     # Required for Bambu printers (enforced below); Creality/Moonraker
     # printers have no access code.
     access_code: str = Field(default="", max_length=20)
+    # Moonraker API key (Creality printers whose Moonraker needs one); blank means none.
+    api_key: str | None = Field(default=None, max_length=128)
+
+    @field_validator("api_key")
+    @classmethod
+    def _blank_api_key_is_none(cls, v: str | None) -> str | None:
+        return (v or "").strip() or None
 
     @model_validator(mode="before")
     @classmethod
@@ -89,6 +96,7 @@ class PrinterUpdate(BaseModel):
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
     access_code: str | None = None
+    api_key: str | None = Field(default=None, max_length=128)
     model: str | None = None
     api_port: int | None = Field(default=None, ge=1, le=65535)
     location: str | None = None
@@ -181,6 +189,7 @@ class PrinterResponseWithSecret(PrinterResponse):
     """
 
     access_code: str
+    api_key: str | None = None
 
 
 class HMSErrorResponse(BaseModel):

@@ -829,17 +829,21 @@ Creality printers that run Klipper with Moonraker — the **Ender-3 V3** family 
 
 | Works | Not yet |
 |-------|---------|
-| **Start a print from Bambuddy** — the Print button, drag-and-drop, the queue and scheduling send a `.gcode` (or the G-code inside a sliced `.3mf`) to the printer through Moonraker | The printer's file browser |
+| **Start a print from Bambuddy** — the Print button, drag-and-drop, the queue and scheduling send a `.gcode` (or the G-code inside a sliced `.3mf`) to the printer through Moonraker | A native view of the K2's WebRTC camera |
 | Live status (state, progress, time left, layers, temperatures, fan) | Bambu-only print options (bed levelling, flow/vibration calibration, AI inspection, preheat soak) — a Creality file carries its own start sequence |
-| Print archive, notifications, smart plugs, MQTT relay | Reprinting an archive (a Creality archive keeps the name and timing, not the G-code) |
+| Print archive with cover picture, filament, cost and the G-code (so it can be printed again), notifications, smart plugs, MQTT relay | Loading / unloading the CFS |
 | Pause / resume / stop, nozzle & bed temperature, speed, part fan, light, home, jog | AMS, HMS, K-profiles, drying (Klipper printers do not have them) |
-| K2 series: chamber temperature and chamber heating, chamber fan | Loading / unloading the CFS from Bambuddy, and assigning spools to CFS slots |
+| K2 series: chamber temperature and chamber heating, chamber fan | Assigning spools to CFS slots |
 | K2 CFS: each unit's four slots with colour, material, remaining filament, humidity and temperature (shown like an AMS, labelled CFS-A, CFS-B …) | |
-| Webcam: Bambuddy looks for a working MJPEG address on its own (see below) | |
+| Webcam: Bambuddy looks for a working MJPEG address on its own, including a go2rtc bridge (see below) | |
+| The printer's own G-code files: list, print, delete | |
+| Cancel a single object during a print (Klipper `EXCLUDE_OBJECT`) | |
+| The printer's own fault messages (halted Klipper, failed job, filament runout) on the card and in notifications | |
+| Find Creality printers on the network from *Add Printer*; optional Moonraker API key | |
 
 This was built against Moonraker's documented API and a simulated printer and has **not been tried on real hardware yet** — please report what you see on your printer.
 
-Fans are detected from what the printer reports (`fan`, `fan0`/`fan1`/`fan2`, `chamber_fan` …), so the card shows only the fans your printer really has. On the K2 series the stock camera is a WebRTC stream, which Bambuddy cannot display; it only shows cameras that serve MJPEG or snapshots (for example through Fluidd's webcam path).
+Fans are detected from what the printer reports (`fan`, `fan0`/`fan1`/`fan2`, `chamber_fan` …), so the card shows only the fans your printer really has. On the K2 series the stock camera is a proprietary WebRTC stream, which Bambuddy cannot display (and some firmwares switch it off). Bambuddy shows cameras that serve MJPEG or snapshots; if you install the camera option of the Creality Helper Script (a go2rtc bridge on port 1984) it is detected automatically on the next connection.
 
 The **Ender-3 V3 SE** ships with Marlin rather than Klipper, so it has no Moonraker API to connect to unless it has been flashed with Klipper.
 

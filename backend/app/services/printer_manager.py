@@ -814,6 +814,7 @@ class PrinterManager:
                 access_code=printer.access_code or "",
                 model=printer.model,
                 port=printer.api_port,
+                api_key=getattr(printer, "api_key", None),
                 on_state_change=on_state_change,
                 on_print_start=on_print_start,
                 on_print_complete=on_print_complete,
@@ -1143,6 +1144,7 @@ class PrinterManager:
         access_code: str,
         printer_type: str = "bambu",
         api_port: int | None = None,
+        api_key: str | None = None,
     ) -> dict:
         """Test connection to a printer without persisting.
 
@@ -1155,7 +1157,7 @@ class PrinterManager:
         hangs" symptom on P1S when called from POST /printers/.
         """
         if printer_type == PRINTER_TYPE_CREALITY:
-            return await self._test_moonraker(ip_address, serial_number, api_port)
+            return await self._test_moonraker(ip_address, serial_number, api_port, api_key)
 
         client = BambuMQTTClient(
             ip_address=ip_address,
@@ -1242,14 +1244,16 @@ class PrinterManager:
         except Exception:  # noqa: BLE001 - housekeeping must never break connecting a printer
             logger.warning("Camera auto-detect failed for printer %s", printer_id, exc_info=True)
 
-    async def _test_moonraker(self, ip_address: str, serial_number: str, api_port: int | None) -> dict:
+    async def _test_moonraker(
+        self, ip_address: str, serial_number: str, api_port: int | None, api_key: str | None = None
+    ) -> dict:
         """Probe a Creality / Klipper printer without persisting it.
 
         Same result shape as the Bambu probe (``success`` / ``state`` /
         ``model`` / ``reason``) plus the printer's webcam URLs when it has one,
         so the add-printer flow can pre-fill the camera.
         """
-        client = MoonrakerClient(ip_address=ip_address, serial_number=serial_number, port=api_port)
+        client = MoonrakerClient(ip_address=ip_address, serial_number=serial_number, port=api_port, api_key=api_key)
         try:
             client.connect()
             deadline = asyncio.get_running_loop().time() + self.PROBE_TIMEOUT_SECONDS

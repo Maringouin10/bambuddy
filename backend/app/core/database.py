@@ -3517,6 +3517,7 @@ async def run_migrations(conn):
     # Migration: Creality (Klipper / Moonraker) printer support
     await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN printer_type VARCHAR(20) DEFAULT 'bambu' NOT NULL")
     await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN api_port INTEGER")
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN api_key VARCHAR(128)")
 
     # Migration: Add REST/Webhook smart plug fields
     await _safe_execute(conn, "ALTER TABLE smart_plugs ADD COLUMN rest_on_url VARCHAR(500)")

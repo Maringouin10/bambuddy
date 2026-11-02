@@ -1383,3 +1383,48 @@ def test_deleting_a_file_hits_the_gcodes_root_and_reports_failure():
     assert fake.deleted == ["sub dir/a.gcode"]
     assert client.delete_gcode_file("sub dir/a.gcode") is False  # already gone
     assert MoonrakerClient("10.0.0.9", "X").delete_gcode_file("a.gcode") is False  # not connected
+
+
+# ---------------------------------------------------------------- Moonraker API key
+
+
+def test_the_api_key_is_sent_as_x_api_key_on_every_request():
+    client = MoonrakerClient("192.168.1.50", "X", api_key="s3cret")
+    with patch("backend.app.services.moonraker_client.threading.Thread", MagicMock()):
+        client.connect()
+    try:
+        assert client._http.headers["x-api-key"] == "s3cret"
+    finally:
+        client.disconnect()
+
+
+def test_no_key_means_no_header():
+    client = MoonrakerClient("192.168.1.50", "X")
+    with patch("backend.app.services.moonraker_client.threading.Thread", MagicMock()):
+        client.connect()
+    try:
+        assert "x-api-key" not in client._http.headers
+    finally:
+        client.disconnect()
+
+
+def test_a_blank_key_is_treated_as_none():
+    assert MoonrakerClient("1.2.3.4", "X", api_key="").api_key is None
+
+
+def test_a_refused_key_reports_unauthorized():
+    fake = FakeMoonraker()
+    fake.status_code = 403
+    client = make_client(fake)
+    with pytest.raises(_ConnectError) as exc:
+        client._handshake()
+    assert exc.value.slug == ERROR_UNAUTHORIZED
+
+
+def test_schema_blank_api_key_becomes_none_and_response_never_has_it():
+    from backend.app.schemas.printer import PrinterResponse
+
+    created = PrinterCreate(name="E", ip_address="1.2.3.4", printer_type="creality", api_key="  ")
+    assert created.api_key is None
+    assert PrinterCreate(name="E", ip_address="1.2.3.4", printer_type="creality", api_key=" abc ").api_key == "abc"
+    assert "api_key" not in PrinterResponse.model_fields

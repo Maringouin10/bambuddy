@@ -7713,6 +7713,7 @@ export function AddPrinterModal({
   // serial number, access code or network discovery, just an IP (+ optional port).
   const isCreality = form.printer_type === 'creality';
   const [moonrakerPort, setMoonrakerPort] = useState('');
+  const [moonrakerKey, setMoonrakerKey] = useState('');
   // Network scan for Creality printers (a Moonraker API answering on its port)
   const [crealitySubnet, setCrealitySubnet] = useState('');
   const [crealityScan, setCrealityScan] = useState<CrealityScanStatus | null>(null);
@@ -7804,6 +7805,7 @@ export function AddPrinterModal({
         serial_number: '',
         access_code: '',
         api_port: moonrakerPort.trim() ? Number(moonrakerPort) : undefined,
+        api_key: moonrakerKey.trim() || undefined,
       });
       return;
     }
@@ -8211,6 +8213,18 @@ export function AddPrinterModal({
                   placeholder="7125"
                 />
                 <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.moonrakerPortHelp')}</p>
+                <label className="block text-sm text-bambu-gray mb-1 mt-3" htmlFor="moonraker-key">
+                  {t('printers.modal.moonrakerApiKey')}
+                </label>
+                <input
+                  id="moonraker-key"
+                  type="password"
+                  autoComplete="off"
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={moonrakerKey}
+                  onChange={(e) => setMoonrakerKey(e.target.value)}
+                />
+                <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.moonrakerApiKeyHelp')}</p>
               </div>
             ) : (
               <>
@@ -8670,6 +8684,7 @@ function EditPrinterModal({
     ip_address: printer.ip_address,
     access_code: '',
     api_port: printer.api_port ? String(printer.api_port) : '',
+    api_key: '',
     model: printer.model || '',
     location: printer.location || '',
     auto_archive: printer.auto_archive,
@@ -8716,6 +8731,8 @@ function EditPrinterModal({
     // Creality: an empty port means "use the Moonraker default", so send null to clear it
     if (isCreality) {
       data.api_port = form.api_port.trim() ? Number(form.api_port) : null;
+      // like the access code: left empty it keeps the saved key
+      if (form.api_key.trim()) data.api_key = form.api_key.trim();
     }
     updateMutation.mutate(data);
   };
@@ -8791,6 +8808,18 @@ function EditPrinterModal({
                   placeholder="7125"
                 />
                 <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.moonrakerPortHelp')}</p>
+                <label className="block text-sm text-bambu-gray mb-1 mt-3" htmlFor="edit-moonraker-key">
+                  {t('printers.modal.moonrakerApiKey')}
+                </label>
+                <input
+                  id="edit-moonraker-key"
+                  type="password"
+                  autoComplete="off"
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={form.api_key}
+                  onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                  placeholder={t('printers.accessCodePlaceholder')}
+                />
               </div>
             ) : (
               <>
@@ -9380,10 +9409,13 @@ export function PrintersPage() {
       // Localized message when the backend returns a stable error code;
       // the raw message is an English fallback for non-UI clients.
       if (error instanceof ApiError && error.code === 'printer_connection_failed') {
+        const unauthorized = variables.printer_type === 'creality' && error.detail?.reason === 'unauthorized';
         showToast(
-          t(variables.printer_type === 'creality'
-            ? 'printers.toast.crealityConnectionFailedNotAdded'
-            : 'printers.toast.connectionFailedNotAdded'),
+          t(unauthorized
+            ? 'printers.toast.crealityUnauthorized'
+            : variables.printer_type === 'creality'
+              ? 'printers.toast.crealityConnectionFailedNotAdded'
+              : 'printers.toast.connectionFailedNotAdded'),
           'error',
         );
         return;

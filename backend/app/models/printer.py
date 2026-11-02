@@ -20,6 +20,9 @@ class Printer(Base):
     printer_type: Mapped[str] = mapped_column(String(20), default="bambu", server_default="bambu")
     # Moonraker HTTP port for "creality" printers (7125 when NULL). Unused for Bambu.
     api_port: Mapped[int | None] = mapped_column(nullable=True)
+    # Moonraker API key, for printers whose Moonraker is not open to the LAN. A secret like
+    # access_code: never in the default PrinterResponse.
+    api_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     location: Mapped[str | None] = mapped_column(String(100))  # Group/location name
     nozzle_count: Mapped[int] = mapped_column(default=1)  # 1 or 2, auto-detected from MQTT
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

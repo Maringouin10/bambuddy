@@ -738,6 +738,7 @@ export interface PrinterCreate {
   access_code: string;
   printer_type?: 'bambu' | 'creality';
   api_port?: number | null;
+  api_key?: string | null;  // Moonraker API key (Creality), only when its Moonraker needs one
   model?: string;
   location?: string;
   auto_archive?: boolean;
