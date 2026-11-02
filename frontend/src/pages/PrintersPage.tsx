@@ -8129,11 +8129,17 @@ export function AddPrinterModal({
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
                 {isCreality ? (
-                  <optgroup label="Ender-3 V3 Series">
-                    <option value="Ender-3 V3">Ender-3 V3 (CoreXZ)</option>
-                    <option value="Ender-3 V3 KE">Ender-3 V3 KE</option>
-                    <option value="Ender-3 V3 Plus">Ender-3 V3 Plus</option>
-                  </optgroup>
+                  <>
+                    <optgroup label="Ender-3 V3 Series">
+                      <option value="Ender-3 V3">Ender-3 V3 (CoreXZ)</option>
+                      <option value="Ender-3 V3 KE">Ender-3 V3 KE</option>
+                      <option value="Ender-3 V3 Plus">Ender-3 V3 Plus</option>
+                    </optgroup>
+                    <optgroup label="K2 Series">
+                      <option value="K2 Plus">K2 Plus</option>
+                      <option value="K2 Pro">K2 Pro</option>
+                    </optgroup>
+                  </>
                 ) : (
                   <>
                   <optgroup label="A1 Series">
@@ -8701,11 +8707,17 @@ function EditPrinterModal({
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
                 {isCreality ? (
-                  <optgroup label="Ender-3 V3 Series">
-                    <option value="Ender-3 V3">Ender-3 V3 (CoreXZ)</option>
-                    <option value="Ender-3 V3 KE">Ender-3 V3 KE</option>
-                    <option value="Ender-3 V3 Plus">Ender-3 V3 Plus</option>
-                  </optgroup>
+                  <>
+                    <optgroup label="Ender-3 V3 Series">
+                      <option value="Ender-3 V3">Ender-3 V3 (CoreXZ)</option>
+                      <option value="Ender-3 V3 KE">Ender-3 V3 KE</option>
+                      <option value="Ender-3 V3 Plus">Ender-3 V3 Plus</option>
+                    </optgroup>
+                    <optgroup label="K2 Series">
+                      <option value="K2 Plus">K2 Plus</option>
+                      <option value="K2 Pro">K2 Pro</option>
+                    </optgroup>
+                  </>
                 ) : (
                   <>
                   <optgroup label="A1 Series">

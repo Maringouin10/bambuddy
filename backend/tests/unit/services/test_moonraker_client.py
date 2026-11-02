@@ -807,3 +807,81 @@ def test_a_printer_with_no_fans_reports_none_and_refuses_fan_commands():
     assert client.state.cooling_fan_speed is None
     assert client.set_fan_speed(1, 100) is False
     assert fake.posts == []
+
+
+# ---------------------------------------------------------------- K2 series (heated chamber)
+
+K2_OBJECTS = [
+    "print_stats",
+    "virtual_sdcard",
+    "extruder",
+    "heater_bed",
+    "fan",
+    "gcode_move",
+    "webhooks",
+    "temperature_sensor chamber_temp",
+    "heater_generic chamber_heater",
+    "temperature_fan chamber_fan",
+    "output_pin ptc_power",
+    "box",
+]
+
+
+def make_k2_fake():
+    fake = FakeMoonraker()
+    fake.objects = list(K2_OBJECTS)
+    fake.status["temperature_sensor chamber_temp"] = {"temperature": 31.0}
+    fake.status["heater_generic chamber_heater"] = {"temperature": 38.4, "target": 55.0}
+    fake.status["temperature_fan chamber_fan"] = {"speed": 0.7, "target": 0.0}
+    return fake
+
+
+def test_k2_chamber_heater_is_preferred_over_the_bare_sensor_and_read_with_its_target():
+    client = make_client(make_k2_fake())
+    tick(client)
+    t = client.state.temperatures
+    assert (t["chamber"], t["chamber_target"]) == (38.4, 55.0)
+    assert t["chamber_heating"] is True
+
+
+def test_k2_chamber_temperature_command_targets_the_chamber_heater_only():
+    fake = make_k2_fake()
+    client = make_client(fake)
+    tick(client)
+    assert client.set_chamber_temperature(60) is True
+    assert client.set_chamber_temperature(0) is True
+    assert [b["script"] for p, b, _ in fake.posts] == [
+        "SET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET=60",
+        "SET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET=0",
+    ]
+    # the PTC power pin and the CFS "box" object are never touched
+    assert all("ptc_power" not in b["script"] for _, b, _ in fake.posts)
+
+
+def test_k2_chamber_fan_is_a_temperature_fan_and_is_read_but_not_driven():
+    fake = make_k2_fake()
+    client = make_client(fake)
+    tick(client)
+    assert client.state.big_fan2_speed == 70
+    assert client.set_fan_speed(3, 255) is False  # it regulates itself from the chamber temperature
+    assert fake.posts == []
+
+
+def test_a_chamber_with_only_a_sensor_is_readable_but_not_controllable():
+    fake = FakeMoonraker()
+    fake.objects = [*OBJECTS, "temperature_sensor chamber_temp"]
+    fake.status["temperature_sensor chamber_temp"] = {"temperature": 29.5}
+    client = make_client(fake)
+    tick(client)
+    assert client.state.temperatures["chamber"] == 29.5
+    assert client.set_chamber_temperature(40) is False
+
+
+def test_k2_models_are_known_to_have_a_heated_chamber():
+    from backend.app.services.printer_manager import supports_chamber_heater, supports_chamber_temp
+
+    for model in ("K2 Plus", "K2 Pro", " k2 plus "):
+        assert supports_chamber_temp(model) is True
+        assert supports_chamber_heater(model) is True
+    assert supports_chamber_heater("Ender-3 V3 KE") is False
+    assert supports_chamber_temp("Ender-3 V3 KE") is False

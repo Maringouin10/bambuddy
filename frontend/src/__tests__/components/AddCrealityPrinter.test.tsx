@@ -115,6 +115,7 @@ describe('Creality printers', () => {
     expect(screen.getByPlaceholderText('7125')).toBeInTheDocument();
     // Creality models are offered instead of Bambu ones.
     expect(screen.getByRole('option', { name: 'Ender-3 V3 KE' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'K2 Plus' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'X1 Carbon' })).not.toBeInTheDocument();
   });
 

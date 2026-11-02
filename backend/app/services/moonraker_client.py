@@ -131,7 +131,7 @@ def discover_fans(listed: list[str]) -> dict[str, FanRef]:
     aux = pick(lambda r: r.kind in manual and (r.name.lower() == "fan1" or named("aux", "side")(r)))
     chamber = pick(
         lambda r: r.kind in manual and (r.name.lower() == "fan2" or named("case", "chamber", "exhaust", "cabinet")(r))
-    ) or pick(lambda r: r.kind == "controller_fan")
+    ) or pick(lambda r: (r.kind == "temperature_fan" and named("chamber")(r)) or r.kind == "controller_fan")
     heatbreak = pick(lambda r: r.kind == "heater_fan")
     for role, ref in (("part", part), ("aux", aux), ("chamber", chamber), ("heatbreak", heatbreak)):
         if ref:
@@ -336,12 +336,15 @@ class MoonrakerClient:
 
         listed = self._request("GET", "/printer/objects/list").get("objects", [])
         objects = list(CORE_OBJECTS) + [o for o in OPTIONAL_OBJECTS if o in listed]
-        # Chamber sensor, if this model has one (K1 / K2 yes, Ender-3 V3 KE no).
-        for name in listed:
-            if name.startswith(("temperature_sensor ", "heater_generic ")) and "chamber" in name.lower():
-                objects.append(name)
-                self._chamber_object = name
-                break
+        # Chamber: a heater_generic (K2 series: chamber_heater, has a target and can be
+        # driven) is preferred over a bare temperature_sensor (K1: read-only).
+        chamber_names = [n for n in listed if "chamber" in n.lower()]
+        heater = next((n for n in chamber_names if n.startswith("heater_generic ")), None)
+        sensor = next((n for n in chamber_names if n.startswith("temperature_sensor ")), None)
+        self._chamber_object = heater or sensor
+        self._chamber_heater = heater.split(" ", 1)[1] if heater else None
+        if self._chamber_object:
+            objects.append(self._chamber_object)
         # Fans: query exactly the ones this printer has.
         self._fans = discover_fans(listed)
         for ref in self._fans.values():
@@ -390,6 +393,7 @@ class MoonrakerClient:
     # ------------------------------------------------------------------ state
 
     _chamber_object: str | None = None
+    _chamber_heater: str | None = None  # heater_generic name when the chamber can be heated
 
     def _apply_status(self, st: dict) -> None:
         stats = st.get("print_stats") or {}
@@ -454,6 +458,9 @@ class MoonrakerClient:
             if "temperature" in ch:
                 temps["chamber"] = round(float(ch["temperature"]), 1)
                 temps["chamber_target"] = round(float(ch.get("target") or 0.0), 1)
+                temps["chamber_heating"] = (
+                    temps["chamber_target"] > 0 and temps["chamber"] < temps["chamber_target"] - 2
+                )
 
     def _apply_fans_and_speed(self, st: dict) -> None:
         for role, attr in (
@@ -744,8 +751,11 @@ class MoonrakerClient:
     def set_nozzle_temperature(self, target: int, nozzle: int = 0) -> bool:  # noqa: ARG002
         return self.send_gcode(f"M104 S{int(max(0, target))}")
 
-    def set_chamber_temperature(self, target: int) -> bool:  # noqa: ARG002
-        return False  # Ender-3 V3 has no chamber heater
+    def set_chamber_temperature(self, target: int) -> bool:
+        """Heat the chamber (K2 series). Printers without a chamber heater return False."""
+        if not self._chamber_heater:
+            return False
+        return self.send_gcode(f"SET_HEATER_TEMPERATURE HEATER={self._chamber_heater} TARGET={int(max(0, target))}")
 
     def set_print_speed(self, mode: int) -> bool:
         percent = SPEED_LEVEL_PERCENT.get(mode)
@@ -824,7 +834,7 @@ class MoonrakerClient:
                     pairs.append((base(stream_path), base(snapshot_path) if snapshot_path else None))
         # Common places a Creality / Klipper printer serves its camera
         # (mjpg-streamer on 8080, or nginx in front of Fluidd / Mainsail).
-        for prefix in (":8080/", "/webcam/", ":4408/webcam/", ":8080/webcam/"):
+        for prefix in (":8080/", "/webcam/", ":4408/webcam/", ":4408/webcam2/", ":8080/webcam/"):
             pairs.append((f"http://{host}{prefix}?action=stream", f"http://{host}{prefix}?action=snapshot"))
         seen: set[str] = set()
         out: list[tuple[str, str | None]] = []

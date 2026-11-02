@@ -24,6 +24,11 @@ describe('getPrinterImage', () => {
       expect(getPrinterImage('', 'creality')).toBe('/img/printers/ender3v3.png');
     });
 
+    it('gives the K2 series its own picture', () => {
+      expect(getPrinterImage('K2 Plus', 'creality')).toBe('/img/printers/k2plus.png');
+      expect(getPrinterImage('K2 Pro')).toBe('/img/printers/k2plus.png');
+    });
+
     it('leaves Bambu printers alone', () => {
       expect(getPrinterImage('X1C', 'bambu')).toBe('/img/printers/x1c.png');
       expect(getPrinterImage(null)).toBe('/img/printers/default.png');

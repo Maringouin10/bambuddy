@@ -825,16 +825,19 @@ Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool
 
 ### Creality (Klipper / Moonraker) — experimental
 
-Creality printers that run Klipper with Moonraker — **Ender-3 V3** (CoreXZ), **Ender-3 V3 KE** and **Ender-3 V3 Plus** to start with — can be added next to your Bambu printers: choose **Creality** in *Add Printer* and enter the printer's IP address (and the Moonraker port if it is not the default `7125`). No serial number or access code is needed.
+Creality printers that run Klipper with Moonraker — the **Ender-3 V3** family (CoreXZ, KE, Plus) and the **K2 series** (K2 Plus, K2 Pro) — can be added next to your Bambu printers: choose **Creality** in *Add Printer* and enter the printer's IP address (and the Moonraker port if it is not the default `7125`). No serial number or access code is needed.
 
 | Works | Not yet |
 |-------|---------|
 | Live status (state, progress, time left, layers, temperatures, fan) | Starting a print from Bambuddy (use Creality Print or Fluidd — Bambuddy still archives it) |
 | Print archive, notifications, smart plugs, MQTT relay | The printer's file browser |
 | Pause / resume / stop, nozzle & bed temperature, speed, part fan, light, home, jog | AMS, HMS, K-profiles, drying (Klipper printers do not have them) |
-| Webcam (picked up from Moonraker) | |
+| K2 series: chamber temperature and chamber heating, chamber fan | K2 CFS (multi-filament system) status |
+| Webcam: Bambuddy looks for a working MJPEG address on its own (see below) | |
 
 This was built against Moonraker's documented API and a simulated printer and has **not been tried on real hardware yet** — please report what you see on your printer.
+
+Fans are detected from what the printer reports (`fan`, `fan0`/`fan1`/`fan2`, `chamber_fan` …), so the card shows only the fans your printer really has. On the K2 series the stock camera is a WebRTC stream, which Bambuddy cannot display; it only shows cameras that serve MJPEG or snapshots (for example through Fluidd's webcam path).
 
 The **Ender-3 V3 SE** ships with Marlin rather than Klipper, so it has no Moonraker API to connect to unless it has been flashed with Klipper.
 

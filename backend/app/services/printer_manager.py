@@ -37,6 +37,8 @@ CHAMBER_TEMP_SUPPORTED_MODELS = frozenset(
         "H2D",
         "H2DPRO",
         "H2S",  # H2 series
+        "K2 PLUS",  # Creality K2 series (heated chamber)
+        "K2 PRO",
         # Internal codes (from MQTT/SSDP)
         "BL-P001",  # X1/X1C
         "C13",  # X1E
@@ -106,6 +108,8 @@ CHAMBER_HEATER_MODELS = frozenset(
         "H2DPRO",
         "H2S",
         "X2D",
+        "K2 PLUS",  # Creality K2 series: heater_generic chamber_heater
+        "K2 PRO",
         # Internal codes (from MQTT/SSDP)
         "O1C",  # H2C
         "O1C2",  # H2C dual-nozzle variant

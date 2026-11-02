@@ -205,3 +205,50 @@ class TestCrealityPrintersAPI:
         assert body["layer_num"] == 40 and body["total_layers"] == 100
         assert body["temperatures"]["bed"] == 60.0
         assert body["ams"] == [] and body["ams_exists"] is False
+
+
+class TestCrealityK2ChamberAPI:
+    CLIENT = "backend.app.services.printer_manager.printer_manager.get_client"
+    STATUS = "backend.app.services.printer_manager.printer_manager.get_status"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_k2_plus_chamber_can_be_heated_through_the_normal_route(
+        self, async_client: AsyncClient, printer_factory
+    ):
+        from unittest.mock import MagicMock
+
+        printer = await printer_factory(name="K2", printer_type="creality", model="K2 Plus")
+        client = MagicMock()
+        client.set_chamber_temperature.return_value = True
+
+        with patch(self.CLIENT, return_value=client):
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/temperature/chamber", params={"target": 55}
+            )
+
+        assert response.status_code == 200, response.text
+        client.set_chamber_temperature.assert_called_once_with(55)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_an_ender_has_no_chamber_heater_and_is_refused(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="Ender", printer_type="creality", model="Ender-3 V3 KE")
+        response = await async_client.post(f"/api/v1/printers/{printer.id}/temperature/chamber", params={"target": 40})
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_k2_status_reports_chamber_temperature_and_heater_support(
+        self, async_client: AsyncClient, printer_factory
+    ):
+        printer = await printer_factory(name="K2", printer_type="creality", model="K2 Plus")
+        state = PrinterState(connected=True, state="IDLE", ftp_capable=False)
+        state.temperatures = {"nozzle": 25.0, "bed": 24.0, "chamber": 38.4, "chamber_target": 55.0}
+
+        with patch(self.STATUS, return_value=state):
+            body = (await async_client.get(f"/api/v1/printers/{printer.id}/status")).json()
+
+        assert body["temperatures"]["chamber"] == 38.4
+        assert body["temperatures"]["chamber_target"] == 55.0
+        assert body["supports_chamber_heater"] is True

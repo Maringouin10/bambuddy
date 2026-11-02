@@ -1,8 +1,9 @@
 export function getPrinterImage(model: string | null | undefined, printerType?: string | null): string {
   const m = (model ?? '').toLowerCase().replace(/\s+/g, '');
-  // Creality (Klipper) printers: the Ender-3 V3 family shares one picture.
-  if (printerType === 'creality' || m.includes('ender') || m.includes('creality')) {
-    return '/img/printers/ender3v3.png';
+  // Creality (Klipper) printers: one picture per family. k2plus.png is a stand-in until a
+  // real K2 photo is dropped over it (same path, no code change).
+  if (printerType === 'creality' || m.includes('ender') || m.includes('creality') || /^k2/.test(m)) {
+    return /^k2/.test(m) ? '/img/printers/k2plus.png' : '/img/printers/ender3v3.png';
   }
   if (!model) return '/img/printers/default.png';
   if (m.includes('x1e')) return '/img/printers/x1e.png';
