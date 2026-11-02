@@ -7323,7 +7323,9 @@ class PrintScheduler:
             stem = job_filename[: -len(".gcode.3mf")] if lower_name.endswith(".gcode.3mf") else job_filename[:-4]
             remote_name = f"{Path(stem).name}.gcode"
             temp_dir = Path(tempfile.mkdtemp(prefix="bambuddy-gcode-"))
-            send_path = temp_dir / remote_name
+            send_path = (
+                temp_dir / remote_name
+            )  # SEC-PATH-OK: remote_name = Path(stem).name + '.gcode', inside a fresh mkdtemp dir
             try:
                 has_gcode = await asyncio.to_thread(
                     extract_plate_gcode_from_3mf, file_path, _effective_plate_id(item.plate_id, file_path), send_path
