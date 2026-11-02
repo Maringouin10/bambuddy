@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '../utils';
 import { PrintersPage } from '../../pages/PrintersPage';
@@ -185,6 +185,35 @@ describe('Creality printers', () => {
 
     expect(await screen.findByRole('button', { name: /^print$/i })).toBeInTheDocument();
     expect(screen.queryByTitle(/hms/i)).not.toBeInTheDocument();
+  });
+
+  it('dropping a sliced .gcode.3mf on a Creality card uploads it; an .stl is refused', async () => {
+    const uploads: string[] = [];
+    server.use(
+      http.get('/api/v1/printers/', () => HttpResponse.json([crealityPrinter])),
+      http.post('/api/v1/library/files', async ({ request }) => {
+        const form = await request.formData();
+        uploads.push((form.get('file') as File).name);
+        return HttpResponse.json({
+          id: 9,
+          filename: (form.get('file') as File).name,
+          file_type: 'gcode.3mf',
+          metadata: { sliced_for_model: 'Creality Ender-3 V3' },
+        });
+      }),
+    );
+    render(<PrintersPage />);
+    const card = (await screen.findByText('Ender 3 V3 KE')) as HTMLElement;
+
+    const drop = (name: string) =>
+      fireEvent.drop(card, { dataTransfer: { files: [new File(['x'], name)], types: ['Files'] } });
+
+    drop('model.stl');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(uploads).toEqual([]);
+
+    drop('Benchy.gcode.3mf');
+    await waitFor(() => expect(uploads).toHaveLength(1));
   });
 
   it('switching back to Bambu restores the credential fields', async () => {

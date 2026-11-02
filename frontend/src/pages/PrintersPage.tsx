@@ -3546,8 +3546,9 @@ function PrinterCard({
     // Only accept sliced/printable files (.gcode, .gcode.3mf, etc.)
     const lower = file.name.toLowerCase();
     if (isCrealityCard) {
-      if (!lower.endsWith('.gcode')) {
-        showToast(t('printers.crealityGcodeOnly'), 'error');
+      // plain .gcode, or a sliced .3mf / .gcode.3mf whose G-code Bambuddy extracts
+      if (!lower.endsWith('.gcode') && !lower.endsWith('.3mf')) {
+        showToast(t('printers.crealityFileTypes'), 'error');
         return;
       }
     } else if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
@@ -6789,7 +6790,7 @@ function PrinterCard({
           validateFile={(file) => {
             const lower = file.name.toLowerCase();
             if (isCrealityCard) {
-              if (!lower.endsWith('.gcode')) return t('printers.crealityGcodeOnly');
+              if (!lower.endsWith('.gcode') && !lower.endsWith('.3mf')) return t('printers.crealityFileTypes');
             } else if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
               return t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed');
             }

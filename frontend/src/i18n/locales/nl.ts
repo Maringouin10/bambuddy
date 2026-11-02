@@ -905,7 +905,7 @@ export default {
     },
     developerModeWarning: 'Developer LAN-modus is niet ingeschakeld op: {{names}}. Sommige functies werken mogelijk niet.',
     howToEnable: 'Inschakelen',
-    crealityGcodeOnly: 'Creality-printers printen gewone .gcode-bestanden. Slice het model met Creality Print en gebruik het .gcode-bestand.',
+    crealityFileTypes: 'Creality-printers printen .gcode-bestanden of een in Creality Print geslicte .3mf.',
     incompatibleFile: 'Dit bestand is gesliced voor {{slicedFor}}, maar deze printer is een {{printerModel}}',
     dropNotPrintable: 'Alleen .gcode- en .gcode.3mf-bestanden kunnen worden afgedrukt',
     dropToPrint: 'Sleep hierheen om af te drukken',

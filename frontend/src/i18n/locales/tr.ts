@@ -900,7 +900,7 @@ export default {
     },
     developerModeWarning: 'Geliştirici LAN modu şunlarda etkin değil: {{names}}. Bazı özellikler çalışmayabilir.',
     howToEnable: 'Nasıl etkinleştirilir',
-    crealityGcodeOnly: 'Creality yazıcılar düz .gcode dosyalarını yazdırır. Modeli Creality Print ile dilimleyin ve .gcode dosyasını kullanın.',
+    crealityFileTypes: 'Creality yazıcılar .gcode dosyalarını veya Creality Print ile dilimlenmiş bir .3mf dosyasını yazdırır.',
     incompatibleFile: 'Bu dosya {{slicedFor}} için dilimlendi, ancak bu yazıcı bir {{printerModel}}',
     dropNotPrintable: 'Yalnızca .gcode ve .gcode.3mf dosyaları yazdırılabilir',
     dropToPrint: 'Yazdırmak için bırakın',

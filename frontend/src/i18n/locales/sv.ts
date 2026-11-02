@@ -905,7 +905,7 @@ export default {
     },
     developerModeWarning: 'Utvecklar-LAN-läge är inte aktiverat på: {{names}}. Vissa funktioner kommer kanske inte att fungera.',
     howToEnable: 'Hur man aktiverar',
-    crealityGcodeOnly: 'Creality-skrivare skriver ut vanliga .gcode-filer. Skiva modellen med Creality Print och använd .gcode-filen.',
+    crealityFileTypes: 'Creality-skrivare skriver ut .gcode-filer eller en .3mf som skivats i Creality Print.',
     incompatibleFile: 'Denna fil var slicad för {{slicedFor}}, men denna skrivare är en {{printerModel}}',
     dropNotPrintable: 'Endast .gcode- och .gcode.3mf-filer kan skrivas ut',
     dropToPrint: 'Släpp för att skriva ut',

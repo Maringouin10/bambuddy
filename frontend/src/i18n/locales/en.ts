@@ -905,7 +905,7 @@ export default {
     },
     developerModeWarning: 'Developer LAN mode is not enabled on: {{names}}. Some features may not work.',
     howToEnable: 'How to enable',
-    crealityGcodeOnly: 'Creality printers print plain .gcode files. Slice the model with Creality Print and use the .gcode file.',
+    crealityFileTypes: 'Creality printers print .gcode files or a sliced .3mf from Creality Print.',
     incompatibleFile: 'This file was sliced for {{slicedFor}}, but this printer is a {{printerModel}}',
     dropNotPrintable: 'Only .gcode and .gcode.3mf files can be printed',
     dropToPrint: 'Drop to print',
