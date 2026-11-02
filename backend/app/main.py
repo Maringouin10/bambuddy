@@ -5172,7 +5172,7 @@ async def on_print_start(printer_id: int, data: dict):
                     extra_data={
                         # Only a Bambu print is missing something when there is no 3MF; a Klipper
                         # printer never has one, so it must not feed the "no 3MF" warning banner.
-                        "no_3mf_available": printer_manager.has_ftp(printer_id),
+                        "no_3mf_available": bool(printer_manager.has_ftp(printer_id)),
                         # Why the card is empty, when we know -- see above. The
                         # banner reads this to stop telling H2/P2 owners to
                         # switch on a setting that is already on and would not
