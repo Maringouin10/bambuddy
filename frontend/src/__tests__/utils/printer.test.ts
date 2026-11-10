@@ -269,3 +269,19 @@ describe('getAmsLabel for the Creality CFS', () => {
     expect(getAmsLabel(128, 1)).toBe('HT-A');
   });
 });
+
+describe('Anycubic models', () => {
+  it('recognises Kobra names and pairs slicer profile with printer', async () => {
+    const { isAnycubicModel, isGcodeCompatible, isModelMatchForPrinter, getPrinterImage } = await import(
+      '../../utils/printer'
+    );
+    expect(isAnycubicModel('Kobra 3 Max')).toBe(true);
+    expect(isAnycubicModel('Anycubic Kobra 3 Max')).toBe(true);
+    expect(isAnycubicModel('K2 Plus')).toBe(false);
+    expect(isGcodeCompatible('Anycubic Kobra 3 Max', 'Kobra 3 Max')).toBe(true);
+    expect(isGcodeCompatible('Anycubic Kobra 3', 'Kobra 3 Max')).toBe(false);
+    expect(isModelMatchForPrinter('Anycubic Kobra 3 Max', 'Kobra 3 Max')).toBe(true);
+    expect(isModelMatchForPrinter('Anycubic Kobra 3 Max', 'P1S')).toBe(false);
+    expect(getPrinterImage('Kobra 3 Max', 'anycubic')).toBe('/img/printers/kobra3max.png');
+  });
+});

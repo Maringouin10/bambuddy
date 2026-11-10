@@ -472,6 +472,11 @@ def is_gcode_compatible(sliced_for_model: str | None, target_model: str | None) 
     # on a Klipper machine, and vice versa).
     if is_creality_model(a) and is_creality_model(b):
         return True
+    # Anycubic Slicer Next names the machine "Anycubic Kobra 3 Max" while the printer is
+    # stored as "Kobra 3 Max": same machine once the brand is dropped. Different Kobras have
+    # different beds, so the names must otherwise match exactly.
+    if is_anycubic_model(a) and is_anycubic_model(b):
+        return a.removeprefix("ANYCUBIC") == b.removeprefix("ANYCUBIC")
     return any(a in family and b in family for family in GCODE_COMPAT_FAMILIES)
 
 
@@ -481,6 +486,14 @@ def is_creality_model(model: str | None) -> bool:
         return False
     norm = model.strip().upper().replace(" ", "").replace("-", "").replace("_", "")
     return norm.startswith(("CREALITY", "ENDER")) or (len(norm) > 1 and norm[0] == "K" and norm[1] in "12")
+
+
+def is_anycubic_model(model: str | None) -> bool:
+    """True for Anycubic machine names ("Kobra 3 Max", "Anycubic Kobra 3 Max" ...)."""
+    if not model:
+        return False
+    norm = model.strip().upper().replace(" ", "").replace("-", "").replace("_", "")
+    return norm.startswith(("ANYCUBIC", "KOBRA"))
 
 
 def normalize_printer_model_id(model_id: str | None) -> str | None:

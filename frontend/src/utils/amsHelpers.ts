@@ -93,6 +93,7 @@ export function getAmsLabel(amsId: number | string, trayCount: number, moduleTyp
   const letter = String.fromCharCode(65 + normalizedId);
   // Creality's CFS (K2 series) is presented as an AMS unit but is not one, so say what it is.
   if (moduleType === 'cfs') return `CFS-${letter}`;
+  if (moduleType === 'ace') return `ACE-${letter}`;
   return isHt ? `HT-${letter}` : `AMS-${letter}`;
 }
 

@@ -180,6 +180,33 @@ async def create_printer(
         api_port=printer_data.api_port,
         api_key=printer_data.api_key,
     )
+    if printer_data.printer_type == "anycubic":
+        reason = test_result.get("reason")
+        if test_result.get("success") and not test_result.get("supported"):
+            reason = "unsupported_model"
+        if reason:
+            messages = {
+                "lan_mode_off": (
+                    "The printer answered but LAN Mode is off. Turn on LAN Mode in the printer's "
+                    "settings (touchscreen) and try again. The printer was not added."
+                ),
+                "unsupported_model": (
+                    f"This printer reports itself as {test_result.get('model') or 'an unknown model'}; "
+                    "only the Anycubic Kobra 3 Max is supported. The printer was not added."
+                ),
+            }
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "printer_connection_failed",
+                    "reason": reason,
+                    "message": messages.get(
+                        reason,
+                        "Could not reach the printer in LAN Mode (port 18910). Verify the IP address, that "
+                        "the printer is on and that LAN Mode is enabled. The printer was not added.",
+                    ),
+                },
+            )
     if not test_result.get("success") and printer_data.printer_type == "creality":
         raise HTTPException(
             status_code=400,
@@ -214,6 +241,8 @@ async def create_printer(
         )
 
     create_fields = printer_data.model_dump()
+    if printer_data.printer_type == "anycubic" and not create_fields.get("model"):
+        create_fields["model"] = test_result.get("model")
     # Pre-fill the camera from the printer's own Moonraker webcam config when the
     # user did not set one (Creality printers stream MJPEG on the LAN).
     webcam = test_result.get("webcam") if printer_data.printer_type == "creality" else None
@@ -1047,8 +1076,8 @@ async def test_printer_connection(
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
 ):
     """Test connection to a printer without saving."""
-    if printer_type not in ("bambu", "creality"):
-        raise HTTPException(400, "printer_type must be 'bambu' or 'creality'")
+    if printer_type not in ("bambu", "creality", "anycubic"):
+        raise HTTPException(400, "printer_type must be 'bambu', 'creality' or 'anycubic'")
     if printer_type == "bambu" and (not serial_number or not access_code):
         raise HTTPException(400, "serial_number and access_code are required for Bambu printers")
     result = await printer_manager.test_connection(

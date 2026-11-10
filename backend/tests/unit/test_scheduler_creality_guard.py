@@ -261,3 +261,19 @@ async def test_other_file_types_are_refused(case):
     final, *_ = await _run(case, ids, _client())
     assert final.status == "failed"
     assert ".gcode" in final.error_message
+
+
+@pytest.mark.asyncio
+async def test_anycubic_printers_take_the_same_upload_path(case):
+    from backend.app.services.anycubic_client import AnycubicClient
+
+    ids = await _seed(case, printer_type="anycubic")
+    client = MagicMock(spec=AnycubicClient)
+    client.upload_and_print.return_value = True
+    client.last_error = None
+
+    final, started, failed, _ = await _run(case, ids, client)
+
+    client.upload_and_print.assert_called_once_with(str(ids.path), "benchy.gcode", True)
+    assert final.status == "printing"
+    failed.assert_not_awaited()

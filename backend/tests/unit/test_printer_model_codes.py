@@ -96,3 +96,28 @@ class TestCrealityGcodeCompatibility:
             assert is_creality_model(model), model
         for model in ("P1S", "X1C", "A1 Mini", "H2D", "K", None, ""):
             assert not is_creality_model(model), model
+
+
+class TestAnycubicGcodeCompatibility:
+    """Anycubic Slicer Next G-code ("Anycubic Kobra 3 Max") runs on the same Kobra only."""
+
+    def test_brand_prefix_is_ignored(self):
+        from backend.app.utils.printer_models import is_gcode_compatible
+
+        assert is_gcode_compatible("Anycubic Kobra 3 Max", "Kobra 3 Max")
+        assert is_gcode_compatible("Kobra 3 Max", "Anycubic Kobra 3 Max")
+
+    def test_other_machines_are_refused(self):
+        from backend.app.utils.printer_models import is_gcode_compatible
+
+        assert not is_gcode_compatible("Anycubic Kobra 3", "Kobra 3 Max")
+        assert not is_gcode_compatible("Anycubic Kobra 3 Max", "P1S")
+        assert not is_gcode_compatible("Creality Ender-3 V3", "Kobra 3 Max")
+        assert not is_gcode_compatible("Anycubic Kobra 3 Max", "K2 Plus")
+
+    def test_is_anycubic_model(self):
+        from backend.app.utils.printer_models import is_anycubic_model, is_creality_model
+
+        assert is_anycubic_model("Kobra 3 Max") and is_anycubic_model("Anycubic Kobra 3 Max")
+        assert not is_anycubic_model("K2 Plus") and not is_anycubic_model(None)
+        assert not is_creality_model("Kobra 3 Max")

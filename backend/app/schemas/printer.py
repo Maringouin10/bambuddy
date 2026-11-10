@@ -34,8 +34,8 @@ class PrinterBase(BaseModel):
     )
     model: str | None = None
     # "bambu" = MQTT + FTPS (default); "creality" = Klipper/Moonraker HTTP API
-    # (Ender-3 V3 KE / CoreXZ / Plus, K1 ...).
-    printer_type: Literal["bambu", "creality"] = "bambu"
+    # (Ender-3 V3 KE / CoreXZ / Plus, K1 ...); "anycubic" = LAN Mode MQTT (Kobra 3 Max).
+    printer_type: Literal["bambu", "creality", "anycubic"] = "bambu"
     # Moonraker port for "creality" printers; the default (7125) is used when None.
     api_port: int | None = Field(default=None, ge=1, le=65535)
     location: str | None = None  # Group/location name
@@ -65,11 +65,14 @@ class PrinterCreate(PrinterBase):
     @model_validator(mode="before")
     @classmethod
     def _creality_defaults(cls, data):
-        """A Creality printer has no serial number to type in: derive a stable id."""
-        if isinstance(data, dict) and data.get("printer_type") == "creality":
+        """A Creality / Anycubic printer has no serial number to type in: derive a stable id."""
+        prefix = {"creality": "CREALITY", "anycubic": "ANYCUBIC"}.get(
+            data.get("printer_type") if isinstance(data, dict) else None
+        )
+        if prefix:
             data = dict(data)
             if not str(data.get("serial_number") or "").strip():
-                data["serial_number"] = f"CREALITY-{str(data.get('ip_address') or '').strip()}"[:50]
+                data["serial_number"] = f"{prefix}-{str(data.get('ip_address') or '').strip()}"[:50]
         return data
 
     @model_validator(mode="after")

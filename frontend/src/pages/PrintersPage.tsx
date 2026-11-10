@@ -3511,6 +3511,9 @@ function PrinterCard({
   // button below has always checked this pair.
   // Creality (Moonraker) printers take plain .gcode only; Bambu printers also take .gcode.3mf.
   const isCrealityCard = printer.printer_type === 'creality';
+  // Anycubic (LAN Mode) printers: same file rules and fault banner as Creality, but no file browser.
+  const isAnycubicCard = printer.printer_type === 'anycubic';
+  const isThirdPartyCard = isCrealityCard || isAnycubicCard;
   const canDrop = hasPermission('library:upload') && hasPermission('queue:create');
 
   // Drives the wording alone. Shared with the PrintModal so the card's promise
@@ -3547,7 +3550,7 @@ function PrinterCard({
 
     // Only accept sliced/printable files (.gcode, .gcode.3mf, etc.)
     const lower = file.name.toLowerCase();
-    if (isCrealityCard) {
+    if (isThirdPartyCard) {
       // plain .gcode, or a sliced .3mf / .gcode.3mf whose G-code Bambuddy extracts
       if (!lower.endsWith('.gcode') && !lower.endsWith('.3mf')) {
         showToast(t('printers.crealityFileTypes'), 'error');
@@ -4058,7 +4061,7 @@ function PrinterCard({
                 </span>
               )}
               {/* A Klipper printer's own fault message (shutdown, failed job, filament runout), full width so it reads */}
-              {isCrealityCard && status?.connected && status.printer_error && (
+              {isThirdPartyCard && status?.connected && status.printer_error && (
                 <div
                   role="alert"
                   className="w-full flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-xs bg-status-error/15 text-status-error"
@@ -4068,7 +4071,7 @@ function PrinterCard({
                 </div>
               )}
               {/* HMS Status Indicator (Bambu only: Klipper printers have no HMS) */}
-              {status?.connected && !isCrealityCard && (() => {
+              {status?.connected && !isThirdPartyCard && (() => {
                 const knownErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
                 return (
                   <button
@@ -4572,7 +4575,7 @@ function PrinterCard({
               // which reads as if removing them were safe.
               // Creality / Klipper printers report whichever fans they really have (null = none),
               // so show exactly those instead of a fixed set of Bambu badges.
-              const showChamberFan = isCrealityCard
+              const showChamberFan = isThirdPartyCard
                 ? status.big_fan2_speed != null
                 : hasChamberFan && (!isExhaustModel || status.exhaust_fan_present);
               const fanItems: {
@@ -4582,7 +4585,7 @@ function PrinterCard({
                 Icon: typeof Fan;
                 activeClass: string;
               }[] = [
-                ...(!isCrealityCard || status.cooling_fan_speed != null
+                ...(!isThirdPartyCard || status.cooling_fan_speed != null
                   ? [
                       {
                         key: 'part',
@@ -4609,7 +4612,7 @@ function PrinterCard({
                       },
                     ]
                   : []),
-                ...(!isCrealityCard || status.big_fan1_speed != null
+                ...(!isThirdPartyCard || status.big_fan1_speed != null
                   ? [
                       {
                         key: 'aux',
@@ -6733,6 +6736,7 @@ function PrinterCard({
                     onClose={() => setCameraMenuAnchor(null)}
                   />
                 )}
+                {!isAnycubicCard && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -6743,6 +6747,7 @@ function PrinterCard({
                 >
                   <HardDrive className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
                 </Button>
+                )}
                 {/* Shown whatever the printer is doing (#2849): this uploads a
                     file and queues it, which a busy or offline printer is no
                     reason to refuse -- it only means the item waits. Hiding it
@@ -6781,7 +6786,7 @@ function PrinterCard({
       </CardContent>
 
       {/* File Manager Modal */}
-      {showFileManager && !isCrealityCard && (
+      {showFileManager && !isThirdPartyCard && (
         <FileManagerModal
           printerId={printer.id}
           printerName={printer.name}
@@ -6807,7 +6812,7 @@ function PrinterCard({
           accept=".gcode,.3mf"
           validateFile={(file) => {
             const lower = file.name.toLowerCase();
-            if (isCrealityCard) {
+            if (isThirdPartyCard) {
               if (!lower.endsWith('.gcode') && !lower.endsWith('.3mf')) return t('printers.crealityFileTypes');
             } else if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
               return t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed');
@@ -7712,6 +7717,10 @@ export function AddPrinterModal({
   // Creality / Klipper printers are driven over Moonraker's HTTP API: no
   // serial number, access code or network discovery, just an IP (+ optional port).
   const isCreality = form.printer_type === 'creality';
+  // Anycubic printers in LAN Mode (Kobra 3 Max): just an IP; the printer hands out
+  // its MQTT credentials itself once LAN Mode is switched on.
+  const isAnycubic = form.printer_type === 'anycubic';
+  const isBambu = !isCreality && !isAnycubic;
   const [moonrakerPort, setMoonrakerPort] = useState('');
   const [moonrakerKey, setMoonrakerKey] = useState('');
   // Network scan for Creality printers (a Moonraker API answering on its port)
@@ -7796,6 +7805,11 @@ export function AddPrinterModal({
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isAnycubic) {
+      // The backend runs the LAN Mode handshake on create and explains a refusal.
+      onAdd({ ...form, model: form.model || 'Kobra 3 Max', serial_number: '', access_code: '' });
+      return;
+    }
     if (isCreality) {
       // The Bambu connection diagnostic probes MQTT/FTPS ports, which a Klipper
       // printer does not have. The backend probes Moonraker itself on create and
@@ -7958,8 +7972,8 @@ export function AddPrinterModal({
           {/* Printer brand: Bambu Lab (MQTT) or Creality (Klipper / Moonraker) */}
           <div className="mb-4">
             <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.printerBrand')}</label>
-            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t('printers.modal.printerBrand')}>
-              {([['bambu', 'Bambu Lab'], ['creality', 'Creality']] as const).map(([type, label]) => (
+            <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label={t('printers.modal.printerBrand')}>
+              {([['bambu', 'Bambu Lab'], ['creality', 'Creality'], ['anycubic', 'Anycubic']] as const).map(([type, label]) => (
                 <button
                   key={type}
                   type="button"
@@ -7978,6 +7992,9 @@ export function AddPrinterModal({
             </div>
             {isCreality && (
               <p className="text-xs text-bambu-gray mt-2">{t('printers.modal.crealityHint')}</p>
+            )}
+            {isAnycubic && (
+              <p className="text-xs text-bambu-gray mt-2">{t('printers.modal.anycubicHint')}</p>
             )}
           </div>
 
@@ -8048,7 +8065,7 @@ export function AddPrinterModal({
           )}
 
           {/* Discovery Section (Bambu only: SSDP / subnet scan find Bambu printers) */}
-          {!isCreality && (
+          {isBambu && (
           <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
             {/* Subnet picker — always visible. The dropdown lists detected
                 interface subnets and a "Custom..." sentinel that reveals
@@ -8226,7 +8243,7 @@ export function AddPrinterModal({
                 />
                 <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.moonrakerApiKeyHelp')}</p>
               </div>
-            ) : (
+            ) : isAnycubic ? null : (
               <>
                 <div>
                   <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
@@ -8272,6 +8289,8 @@ export function AddPrinterModal({
                       <option value="K2 Pro">K2 Pro</option>
                     </optgroup>
                   </>
+                ) : isAnycubic ? (
+                  <option value="Kobra 3 Max">Kobra 3 Max</option>
                 ) : (
                   <>
                   <optgroup label="A1 Series">
@@ -8327,7 +8346,7 @@ export function AddPrinterModal({
                 {t('printers.modal.autoArchiveLabel')}
               </label>
             </div>
-            {!isCreality && (
+            {isBambu && (
             <button
               type="button"
               onClick={() => setShowDiagnostic(true)}
@@ -8679,6 +8698,7 @@ function EditPrinterModal({
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const isCreality = printer.printer_type === 'creality';
+  const isAnycubic = printer.printer_type === 'anycubic';
   const [form, setForm] = useState({
     name: printer.name,
     ip_address: printer.ip_address,
@@ -8739,8 +8759,8 @@ function EditPrinterModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isCreality) {
-      // Bambu's MQTT/FTPS diagnostic does not apply to a Moonraker printer.
+    if (isCreality || isAnycubic) {
+      // Bambu's MQTT/FTPS diagnostic does not apply to a Moonraker or Anycubic printer.
       doSave();
       return;
     }
@@ -8821,7 +8841,7 @@ function EditPrinterModal({
                   placeholder={t('printers.accessCodePlaceholder')}
                 />
               </div>
-            ) : (
+            ) : isAnycubic ? null : (
               <>
                 <div>
                   <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
@@ -8865,6 +8885,8 @@ function EditPrinterModal({
                       <option value="K2 Pro">K2 Pro</option>
                     </optgroup>
                   </>
+                ) : isAnycubic ? (
+                  <option value="Kobra 3 Max">Kobra 3 Max</option>
                 ) : (
                   <>
                   <optgroup label="A1 Series">
@@ -9408,6 +9430,18 @@ export function PrintersPage() {
     onError: (error: Error, variables) => {
       // Localized message when the backend returns a stable error code;
       // the raw message is an English fallback for non-UI clients.
+      if (error instanceof ApiError && error.code === 'printer_connection_failed' && variables.printer_type === 'anycubic') {
+        const reason = error.detail?.reason;
+        showToast(
+          t(reason === 'lan_mode_off'
+            ? 'printers.toast.anycubicLanModeOff'
+            : reason === 'unsupported_model'
+              ? 'printers.toast.anycubicUnsupportedModel'
+              : 'printers.toast.anycubicConnectionFailedNotAdded'),
+          'error',
+        );
+        return;
+      }
       if (error instanceof ApiError && error.code === 'printer_connection_failed') {
         const unauthorized = variables.printer_type === 'creality' && error.detail?.reason === 'unauthorized';
         showToast(

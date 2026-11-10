@@ -425,7 +425,7 @@ export interface Printer {
   model: string | null;
   // "bambu" = MQTT + FTPS (default). "creality" = Klipper / Moonraker HTTP API
   // (Ender-3 V3 KE / CoreXZ / Plus ...): no serial number, access code, AMS or HMS.
-  printer_type?: 'bambu' | 'creality';
+  printer_type?: 'bambu' | 'creality' | 'anycubic';
   api_port?: number | null;  // Moonraker port for Creality printers (default 7125)
   location: string | null;  // Group/location name
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
@@ -736,7 +736,7 @@ export interface PrinterCreate {
   serial_number: string;
   ip_address: string;
   access_code: string;
-  printer_type?: 'bambu' | 'creality';
+  printer_type?: 'bambu' | 'creality' | 'anycubic';
   api_port?: number | null;
   api_key?: string | null;  // Moonraker API key (Creality), only when its Moonraker needs one
   model?: string;

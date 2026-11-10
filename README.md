@@ -847,6 +847,20 @@ Fans are detected from what the printer reports (`fan`, `fan0`/`fan1`/`fan2`, `c
 
 The **Ender-3 V3 SE** ships with Marlin rather than Klipper, so it has no Moonraker API to connect to unless it has been flashed with Klipper.
 
+### Anycubic Kobra 3 Max (LAN Mode) — experimental
+
+The **Anycubic Kobra 3 Max** can be added in **LAN Mode**: first switch on *LAN Mode* in the printer's own settings (touchscreen), then choose **Anycubic** in *Add Printer* and enter its IP address. Nothing else is needed — the printer hands Bambuddy its MQTT credentials through a signed handshake on port 18910 and reports over its local MQTT broker (TLS, port 9883). With LAN Mode on, the Anycubic cloud app no longer reaches the printer; nothing leaves your network.
+
+| Works | Not yet |
+|-------|---------|
+| Live status (state, progress, time left, layers, nozzle/bed temperatures, fans, speed mode) | The printer's camera (an HTTP-FLV stream Bambuddy cannot show — add a separate camera if you have one) |
+| **Start a print from Bambuddy** — Print button, drag-and-drop, queue: the `.gcode` (or the G-code inside a sliced `.3mf`) is uploaded to the printer and started | Multi-colour mapping: a print uses the ACE slot currently feeding the printer |
+| Pause / resume / stop, nozzle & bed temperature, part / auxiliary fan, light, speed mode (Silent / Standard / Sport) | Raw G-code, homing and jogging (LAN Mode has no G-code channel) |
+| ACE Pro shown like an AMS (colour, material, humidity; labelled ACE-A …) | Drying and loading / unloading the ACE from Bambuddy |
+| Print archive, notifications, smart plugs, MQTT relay | |
+
+Only the Kobra 3 Max is accepted for now (other Anycubic models are refused when added). This was built from the community documentation of the LAN Mode protocol and **has not been tried on real hardware yet** — please report what you see.
+
 ---
 
 ## 🛠️ Tech Stack

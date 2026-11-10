@@ -7230,7 +7230,10 @@ class PrintScheduler:
             printer_manager.set_current_print_user(item.printer_id, owner.id, owner.username)
 
     async def _start_print_moonraker(self, db: AsyncSession, item: PrintQueueItem, printer: Printer) -> None:
-        """Send a queue item's G-code to a Creality / Klipper printer and start it.
+        """Send a queue item's G-code to a Creality / Klipper or Anycubic (LAN Mode) printer and start it.
+
+        Both clients expose the same ``upload_and_print``: Moonraker stores and starts the
+        file in one request; an Anycubic printer takes an HTTP upload and an MQTT start.
 
         What the Bambu path does that this one deliberately does not: no FTPS upload, no
         ``project_file`` command, no AMS mapping, no preheat soak, no 3MF archive. The
@@ -7239,6 +7242,7 @@ class PrintScheduler:
         name-and-timing one the print-start callback records when the printer reports
         the job, exactly as for a print started from Creality Print or Fluidd.
         """
+        from backend.app.services.anycubic_client import AnycubicClient
         from backend.app.services.moonraker_client import MoonrakerClient
 
         async def fail(message: str, *, notify: bool = True) -> None:
@@ -7269,7 +7273,9 @@ class PrintScheduler:
         job_filename: str | None = None
 
         client = printer_manager.get_client(item.printer_id)
-        if not isinstance(client, MoonrakerClient) or not printer_manager.is_connected(item.printer_id):
+        if not isinstance(client, (MoonrakerClient, AnycubicClient)) or not printer_manager.is_connected(
+            item.printer_id
+        ):
             await fail("Printer not connected", notify=False)
             return
 
@@ -7370,7 +7376,7 @@ class PrintScheduler:
         item.started_at = now_utc
         item.billing_run_id = billing_run_id
 
-        logger.info("Queue item %s: sending %s to %s via Moonraker", item.id, remote_name, printer.name)
+        logger.info("Queue item %s: sending %s to %s (%s)", item.id, remote_name, printer.name, printer.printer_type)
         try:
             sent = await asyncio.to_thread(client.upload_and_print, str(send_path), remote_name, True)
         finally:

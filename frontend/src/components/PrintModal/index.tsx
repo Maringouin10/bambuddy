@@ -450,7 +450,11 @@ export function PrintModal({
   const onlyCrealityTargets =
     assignmentMode === 'printer' &&
     selectedPrinters.length > 0 &&
-    selectedPrinters.every((id) => printers?.find((p) => p.id === id)?.printer_type === 'creality');
+    selectedPrinters.every((id) => {
+      // Anycubic (LAN Mode) printers are sent plain G-code too.
+      const type = printers?.find((p) => p.id === id)?.printer_type;
+      return type === 'creality' || type === 'anycubic';
+    });
 
   // The archive's own saved AMS-slot pick from the slicer (see the "Save AMS
   // mapping" virtual-printer setting) — undefined for library files or

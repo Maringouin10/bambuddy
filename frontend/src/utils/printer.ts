@@ -2,6 +2,10 @@ export function getPrinterImage(model: string | null | undefined, printerType?: 
   const m = (model ?? '').toLowerCase().replace(/\s+/g, '');
   // Creality (Klipper) printers: one picture per family. k2plus.png is a stand-in until a
   // real K2 photo is dropped over it (same path, no code change).
+  // Anycubic (Kobra 3 Max): kobra3max.png is a stand-in until a real photo replaces it.
+  if (printerType === 'anycubic' || m.includes('kobra') || m.includes('anycubic')) {
+    return '/img/printers/kobra3max.png';
+  }
   if (printerType === 'creality' || m.includes('ender') || m.includes('creality') || /^k2/.test(m)) {
     return /^k2/.test(m) ? '/img/printers/k2plus.png' : '/img/printers/ender3v3.png';
   }
@@ -47,6 +51,21 @@ export function isCrealityModel(model: string | null | undefined): boolean {
   return n.startsWith('CREALITY') || n.startsWith('ENDER') || /^K[12]/.test(n);
 }
 
+/** True for Anycubic machine names ("Kobra 3 Max", "Anycubic Kobra 3 Max").
+ *  Mirrors backend is_anycubic_model in printer_models.py — keep the two in sync. */
+export function isAnycubicModel(model: string | null | undefined): boolean {
+  if (!model) return false;
+  const n = model.trim().toUpperCase().replace(/[\s_-]/g, '');
+  return n.startsWith('ANYCUBIC') || n.startsWith('KOBRA');
+}
+
+/** "Anycubic Kobra 3 Max" (Anycubic Slicer Next) and "Kobra 3 Max" are the same machine. */
+function sameAnycubicMachine(a: string, b: string): boolean {
+  if (!isAnycubicModel(a) || !isAnycubicModel(b)) return false;
+  const strip = (m: string) => m.trim().toUpperCase().replace(/[\s_-]/g, '').replace(/^ANYCUBIC/, '');
+  return strip(a) === strip(b);
+}
+
 /** True when G-code sliced for one model may be dispatched to the other.
  *  Unknown/missing metadata on either side returns true (can't validate). */
 export function isGcodeCompatible(
@@ -61,6 +80,7 @@ export function isGcodeCompatible(
   // Creality slicer profiles are per machine and people slice with a neighbouring one,
   // so any Creality G-code is accepted on any Creality printer (Bambu files never are).
   if (isCrealityModel(slicedForModel) && isCrealityModel(targetModel)) return true;
+  if (sameAnycubicMachine(slicedForModel, targetModel)) return true;
   return GCODE_COMPAT_FAMILIES.some((family) => family.has(a) && family.has(b));
 }
 
@@ -175,5 +195,6 @@ export function isModelMatchForPrinter(
 ): boolean {
   if (!slicedForModel || !printerModel) return true;
   if (slicedForModel.trim().toLowerCase() === printerModel.trim().toLowerCase()) return true;
+  if (sameAnycubicMachine(slicedForModel, printerModel)) return true;
   return isCrealityModel(slicedForModel) && isCrealityModel(printerModel);
 }

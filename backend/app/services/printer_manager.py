@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.printer import Printer
+from backend.app.services.anycubic_client import PRINTER_TYPE_ANYCUBIC, AnycubicClient
 from backend.app.services.bambu_mqtt import (
     STAGE_NAMES,
     BambuMQTTClient,
@@ -390,7 +391,7 @@ class PrinterManager:
     """Manager for multiple printer connections."""
 
     def __init__(self):
-        self._clients: dict[int, BambuMQTTClient | MoonrakerClient] = {}
+        self._clients: dict[int, BambuMQTTClient | MoonrakerClient | AnycubicClient] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
         # Last AMS / external-spool reading of a printer whose client has been
@@ -805,6 +806,29 @@ class PrinterManager:
             if self._on_tray_change:
                 self._schedule_async(self._on_tray_change(printer_id, tray_global, layer_num))
 
+        if getattr(printer, "printer_type", None) == PRINTER_TYPE_ANYCUBIC:
+            # Anycubic in LAN Mode (Kobra 3 Max): MQTT with credentials from a
+            # signed handshake; no AMS / drying / assignment events either.
+            client = AnycubicClient(
+                ip_address=printer.ip_address,
+                serial_number=printer.serial_number,
+                model=printer.model,
+                on_state_change=on_state_change,
+                on_print_start=on_print_start,
+                on_print_complete=on_print_complete,
+                on_layer_change=on_layer_change,
+                on_print_progress=on_print_progress,
+                on_bed_temp_update=on_bed_temp_update,
+                on_print_running_observed=on_print_running_observed,
+                on_finish_photo_moment=on_finish_photo_moment,
+            )
+            client.connect()
+            self._clients[printer_id] = client
+            self._models[printer_id] = printer.model
+            self._printer_info[printer_id] = PrinterInfo(printer.name, printer.serial_number)
+            await asyncio.sleep(1)
+            return client.state.connected
+
         if getattr(printer, "printer_type", None) == PRINTER_TYPE_CREALITY:
             # Klipper / Moonraker printers (Ender-3 V3 ...) have no AMS, drying
             # or assignment events, so only the callbacks that apply are wired.
@@ -938,16 +962,16 @@ class PrinterManager:
         return False
 
     def has_ftp(self, printer_id: int) -> bool:
-        """False for Creality / Moonraker printers, which have no FTPS service.
+        """False for Creality (Moonraker) and Anycubic printers, which have no FTPS service.
 
         Callers use it to skip Bambu-only housekeeping (SD-card cleanup, timelapse
         download, 3MF fetch) that would otherwise burn retries against a port
         that is never open. Unknown / disconnected printers read as Bambu.
         """
         client = self._clients.get(printer_id)
-        return getattr(client, "printer_type", None) != PRINTER_TYPE_CREALITY
+        return getattr(client, "printer_type", None) not in (PRINTER_TYPE_CREALITY, PRINTER_TYPE_ANYCUBIC)
 
-    def get_client(self, printer_id: int) -> BambuMQTTClient | MoonrakerClient | None:
+    def get_client(self, printer_id: int) -> BambuMQTTClient | MoonrakerClient | AnycubicClient | None:
         """Get the MQTT client for a printer."""
         return self._clients.get(printer_id)
 
@@ -1156,6 +1180,8 @@ class PrinterManager:
         original synchronous teardown produced the #1445 "Docker container
         hangs" symptom on P1S when called from POST /printers/.
         """
+        if printer_type == PRINTER_TYPE_ANYCUBIC:
+            return await self._test_anycubic(ip_address)
         if printer_type == PRINTER_TYPE_CREALITY:
             return await self._test_moonraker(ip_address, serial_number, api_port, api_key)
 
@@ -1271,6 +1297,27 @@ class PrinterManager:
             }
         finally:
             await asyncio.to_thread(client.disconnect)
+
+    async def _test_anycubic(self, ip_address: str) -> dict:
+        """Probe an Anycubic printer in LAN Mode: the signed handshake, no MQTT session.
+
+        A printer with LAN Mode off answers the discovery request with
+        ``ctrlType: cloud``; that comes back as reason ``lan_mode_off``.
+        """
+        from backend.app.services import anycubic_client
+
+        try:
+            info = await asyncio.to_thread(anycubic_client.probe, ip_address)
+        except anycubic_client.AnycubicError as exc:
+            return {"success": False, "state": None, "model": None, "reason": exc.slug, "detail": str(exc)}
+        return {
+            "success": True,
+            "state": None,
+            "model": info["model"],
+            "reason": None,
+            "serial": info.get("serial"),
+            "supported": info["supported"],
+        }
 
 
 def get_derived_status_name(state: PrinterState, model: str | None = None) -> str | None:
